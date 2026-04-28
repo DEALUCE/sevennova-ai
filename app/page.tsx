@@ -91,10 +91,13 @@ export default function Home() {
           <input
             value={address}
             onChange={e => setAddress(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && address && (window.location.href = `/property?address=${encodeURIComponent(address)}`)}
             placeholder="Enter any US address, parcel, or zip code..."
             style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#e2e8f0', fontSize: '16px', fontFamily: 'inherit' }}
           />
-          <button style={{ background: 'linear-gradient(135deg, #f5a623, #f9d423)', color: '#0a0e1a', border: 'none', borderRadius: '10px', padding: '12px 24px', fontWeight: 700, fontSize: '15px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <button
+            onClick={() => address && (window.location.href = `/property?address=${encodeURIComponent(address)}`)}
+            style={{ background: 'linear-gradient(135deg, #f5a623, #f9d423)', color: '#0a0e1a', border: 'none', borderRadius: '10px', padding: '12px 24px', fontWeight: 700, fontSize: '15px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             Analyze with AI →
           </button>
         </div>
