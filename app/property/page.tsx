@@ -1,50 +1,87 @@
 'use client'
 import { useSearchParams } from 'next/navigation'
-import { Suspense } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 
-function getZoneData(address: string) {
-  const a = address.toLowerCase()
+type PermitRecord = { pcis_permit?: string; permit_type?: string; latest_status?: string; issue_date?: string; work_description?: string; zone?: string }
+type InspectionRecord = { permit_nbr?: string; inspection_date?: string; inspection_type?: string; result?: string }
 
-  // High risk patterns
-  if (a.includes('jefferson') || a.includes('slauson') || a.includes('florence') || a.includes('figueroa'))
-    return { zone: 'C2-1 — Commercial (Limited Height)', use: 'Retail, Office, Mixed-Use', far: '1.5x', height: '45 ft', adu: 'Not eligible', risk: 'HIGH', color: '#ef4444', flag: '⚠ Active enforcement patterns detected in this corridor — full review required' }
-
-  // Commercial corridors
-  if (a.includes('blvd') || a.includes('wilshire') || a.includes('venice') || a.includes('pico') || a.includes('olympic') || a.includes('santa monica blvd') || a.includes('sunset') || a.includes('hollywood'))
-    return { zone: 'C2 — General Commercial', use: 'Retail, Restaurant, Office, Mixed-Use', far: '1.5x', height: '45 ft', adu: 'Case by case', risk: 'MEDIUM', color: '#f59e0b', flag: 'Recommend permit history review before closing' }
-
-  // Industrial
-  if (a.includes('alameda') || a.includes('industrial') || a.includes('district') || a.includes('harbor') || a.includes('compton'))
-    return { zone: 'M1 — Light Industrial', use: 'Manufacturing, Warehouse, Light Industrial', far: '1.0x', height: '50 ft', adu: 'Not eligible', risk: 'MEDIUM', color: '#f59e0b', flag: 'Verify permitted use before purchase' }
-
-  // Multifamily
-  if (a.includes(' rd') || a.includes('court') || a.includes('way') || a.includes('place') || a.includes('dr') || a.includes('lane'))
-    return { zone: 'R3 — Multiple Family', use: 'Multi-family residential, ADU', far: '3.0x', height: '45 ft', adu: '✓ Eligible — high potential', risk: 'LOW', color: '#10b981', flag: '✓ No major violations detected in this area' }
-
-  // Default single family
-  return { zone: 'R1 — Single Family Residential', use: 'Single family home, ADU', far: '0.5x', height: '28 ft', adu: '✓ Eligible', risk: 'LOW', color: '#10b981', flag: '✓ No open violations detected' }
+type PropertyData = {
+  loading: boolean
+  error: string
+  permits: PermitRecord[]
+  inspections: InspectionRecord[]
+  zone: string
+  risk: string
+  riskColor: string
+  openCases: number
 }
 
-function getState(address: string) {
-  const a = address.toLowerCase()
-  if (a.includes(', ca') || a.includes('california') || a.includes('los angeles') || a.includes('beverly hills') || a.includes('santa monica') || a.includes('pasadena')) return 'California'
-  if (a.includes(', ny') || a.includes('new york')) return 'New York'
-  if (a.includes(', tx') || a.includes('texas') || a.includes('dallas') || a.includes('houston')) return 'Texas'
-  if (a.includes(', fl') || a.includes('florida') || a.includes('miami')) return 'Florida'
-  return 'United States'
+function parseAddress(address: string) {
+  const parts = address.trim().split(' ')
+  const num = parts[0]
+  const direction = ['N','S','E','W'].includes(parts[1]?.toUpperCase()) ? parts[1] : ''
+  const street = direction ? parts.slice(2).join(' ') : parts.slice(1).join(' ')
+  return { num, direction, street: street.replace(/,.*/, '').trim() }
+}
+
+function getRiskFromPermits(permits: PermitRecord[], inspections: InspectionRecord[]) {
+  const expired = permits.filter(p => p.latest_status?.toLowerCase().includes('expired') || p.latest_status?.toLowerCase().includes('cancel')).length
+  const denied = inspections.filter(i => i.result?.toLowerCase().includes('fail') || i.result?.toLowerCase().includes('denied')).length
+  if (expired > 2 || denied > 1) return { risk: 'HIGH', color: '#ef4444' }
+  if (expired > 0 || denied > 0) return { risk: 'MEDIUM', color: '#f59e0b' }
+  return { risk: 'LOW', color: '#10b981' }
 }
 
 function PropertyPreview() {
   const params = useSearchParams()
   const address = params.get('address') || ''
 
-  if (!address) {
-    if (typeof window !== 'undefined') window.location.href = '/'
-    return null
-  }
+  const [data, setData] = useState<PropertyData>({
+    loading: true, error: '', permits: [], inspections: [],
+    zone: '', risk: '', riskColor: '', openCases: 0
+  })
 
-  const z = getZoneData(address)
-  const state = getState(address)
+  useEffect(() => {
+    if (!address) return
+    async function fetchLADBS() {
+      try {
+        const { num, direction, street } = parseAddress(address)
+        const streetClean = street.replace(/blvd|ave|st|dr|rd|ln|way|pl|ct/gi, '').trim()
+
+        // LA Build Permits API
+        const permitUrl = `https://data.lacity.org/resource/xnhu-aczu.json?address_start=${encodeURIComponent(num)}&$limit=10`
+        // LADBS Inspections API
+        const inspectUrl = `https://data.lacity.org/resource/9w5z-rg2h.json?address=${encodeURIComponent(num + ' ' + (direction ? direction + ' ' : '') + streetClean)}&$limit=10`
+
+        const [permitRes, inspectRes] = await Promise.allSettled([
+          fetch(permitUrl).then(r => r.json()),
+          fetch(inspectUrl).then(r => r.json()),
+        ])
+
+        const permits: PermitRecord[] = permitRes.status === 'fulfilled' ? (Array.isArray(permitRes.value) ? permitRes.value : []) : []
+        const inspections: InspectionRecord[] = inspectRes.status === 'fulfilled' ? (Array.isArray(inspectRes.value) ? inspectRes.value : []) : []
+
+        const { risk, color } = getRiskFromPermits(permits, inspections)
+        const zone = permits[0]?.zone || 'See full report'
+        const openCases = permits.filter(p => p.latest_status?.toLowerCase().includes('issued') || p.latest_status?.toLowerCase().includes('open')).length
+
+        setData({ loading: false, error: '', permits, inspections, zone, risk, riskColor: color, openCases })
+      } catch {
+        setData(d => ({ ...d, loading: false, error: 'Could not load LADBS data. Try a full LA address.' }))
+      }
+    }
+    fetchLADBS()
+  }, [address])
+
+  if (data.loading) return (
+    <div style={{ background: '#0a0e1a', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <div style={{ width: '48px', height: '48px', border: '3px solid rgba(245,166,35,0.2)', borderTop: '3px solid #f5a623', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+      <p style={{ color: '#64748b' }}>Scanning LADBS records...</p>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  )
+
+  const hasRealData = data.permits.length > 0 || data.inspections.length > 0
 
   return (
     <div style={{ background: '#0a0e1a', minHeight: '100vh', color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -62,39 +99,60 @@ function PropertyPreview() {
 
         {/* HEADER */}
         <div style={{ marginBottom: '24px' }}>
-          <span style={{ fontSize: '11px', color: '#64748b', letterSpacing: '3px', textTransform: 'uppercase' }}>AI Property Analysis</span>
+          <span style={{ fontSize: '11px', color: '#64748b', letterSpacing: '3px', textTransform: 'uppercase' }}>
+            {hasRealData ? '✓ Live LADBS Data' : 'AI Property Analysis'}
+          </span>
           <h1 style={{ fontSize: 'clamp(18px, 3vw, 30px)', fontWeight: 900, letterSpacing: '-0.5px', marginTop: '8px', color: '#f1f5f9', lineHeight: 1.3 }}>{address}</h1>
-          <p style={{ fontSize: '13px', color: '#475569', marginTop: '6px' }}>{state} · SevenNova Intelligence Report Preview</p>
+          <p style={{ fontSize: '13px', color: '#475569', marginTop: '6px' }}>
+            {hasRealData ? `${data.permits.length} permit records · ${data.inspections.length} inspection records found` : 'Los Angeles · SevenNova Intelligence Preview'}
+          </p>
         </div>
 
-        {/* RISK BADGE */}
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: `rgba(${z.risk === 'HIGH' ? '239,68,68' : z.risk === 'MEDIUM' ? '245,158,11' : '16,185,129'},0.1)`, border: `1px solid ${z.color}`, borderRadius: '100px', padding: '10px 24px', marginBottom: '40px' }}>
-          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: z.color }} />
-          <span style={{ fontWeight: 700, fontSize: '15px', color: z.color }}>RISK LEVEL: {z.risk}</span>
+        {/* RISK */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', background: `rgba(${data.risk === 'HIGH' ? '239,68,68' : data.risk === 'MEDIUM' ? '245,158,11' : '16,185,129'},0.1)`, border: `1px solid ${data.riskColor}`, borderRadius: '100px', padding: '10px 24px', marginBottom: '40px' }}>
+          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: data.riskColor }} />
+          <span style={{ fontWeight: 700, fontSize: '15px', color: data.riskColor }}>RISK LEVEL: {data.risk}</span>
         </div>
 
         {/* FREE PREVIEW */}
         <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '32px', marginBottom: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 700 }}>Free Preview</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: 700 }}>
+              {hasRealData ? '✓ Live LADBS Preview' : 'Free Preview'}
+            </h2>
             <span style={{ fontSize: '12px', color: '#f5a623', background: 'rgba(245,166,35,0.1)', padding: '4px 12px', borderRadius: '100px', border: '1px solid rgba(245,166,35,0.3)' }}>PARTIAL DATA</span>
           </div>
+
           {[
             ['Address', address],
-            ['State / Market', state],
-            ['Zoning (Estimated)', z.zone],
-            ['Permitted Use', z.use],
-            ['Max FAR', z.far],
-            ['Height Limit', z.height],
-            ['ADU Potential', z.adu],
-            ['Violation Indicator', z.flag],
+            ['Permit Records Found', hasRealData ? `${data.permits.length} records in LADBS` : 'Run full search'],
+            ['Inspection Records', hasRealData ? `${data.inspections.length} inspections on file` : 'Run full search'],
+            ['Open/Issued Permits', hasRealData ? (data.openCases > 0 ? `⚠ ${data.openCases} open permit(s) detected` : '✓ No open permits') : 'Requires full report'],
+            ['Zoning (from permits)', data.zone || 'Requires full report'],
+            ['Most Recent Permit', data.permits[0]?.issue_date ? new Date(data.permits[0].issue_date).toLocaleDateString() : 'See full report'],
+            ['Last Permit Type', data.permits[0]?.permit_type || 'See full report'],
+            ['Last Permit Status', data.permits[0]?.latest_status || 'See full report'],
           ].map(([k, v]) => (
             <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '13px', gap: '24px', flexWrap: 'wrap' }}>
               <span style={{ color: '#64748b', flexShrink: 0 }}>{k}</span>
-              <span style={{ fontWeight: 600, color: v.includes('⚠') ? '#ef4444' : v.includes('✓') ? '#10b981' : '#e2e8f0', textAlign: 'right', maxWidth: '60%' }}>{v}</span>
+              <span style={{ fontWeight: 600, color: String(v).includes('⚠') ? '#ef4444' : String(v).includes('✓') ? '#10b981' : '#e2e8f0', textAlign: 'right' }}>{String(v)}</span>
             </div>
           ))}
         </div>
+
+        {/* RECENT PERMITS TABLE */}
+        {data.permits.length > 0 && (
+          <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '16px', color: '#94a3b8' }}>Recent Permit History (Public Records)</h3>
+            {data.permits.slice(0, 3).map((p, i) => (
+              <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: '12px', display: 'flex', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                <span style={{ color: '#64748b' }}>{p.permit_type || 'Permit'} — {p.issue_date ? new Date(p.issue_date).toLocaleDateString() : 'N/A'}</span>
+                <span style={{ color: p.latest_status?.toLowerCase().includes('expired') ? '#ef4444' : '#10b981', fontWeight: 600 }}>{p.latest_status || 'Unknown'}</span>
+              </div>
+            ))}
+            <p style={{ fontSize: '11px', color: '#334155', marginTop: '12px' }}>Source: City of Los Angeles LADBS · data.lacity.org</p>
+          </div>
+        )}
 
         {/* LOCKED */}
         <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', padding: '32px', marginBottom: '32px', position: 'relative', overflow: 'hidden' }}>
@@ -104,7 +162,7 @@ function PropertyPreview() {
             <span style={{ fontSize: '13px', color: '#64748b' }}>Delivered in 24 hours</span>
           </div>
           <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '20px', filter: 'blur(3px)' }}>Full Intelligence Report</h2>
-          {['Complete zoning + overlay districts + amendments', 'All open municipal violation cases', 'Full permit history (approved, expired, denied)', 'Unpermitted work + structural risk flags', 'Ownership chain + deed + lien history', 'AI risk score A–F + investment grade', 'Development + ADU feasibility analysis', 'AI-written due diligence summary PDF'].map(item => (
+          {['All LADBS code enforcement cases (CEIS)', 'Complete permit history + expired/denied', 'Unpermitted work detection', 'Ownership chain + deed + lien history', 'Full zoning + overlay districts + setbacks', 'AI risk score A–F + investment grade', 'Development + ADU feasibility', 'AI-written due diligence PDF summary'].map(item => (
             <div key={item} style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: '13px', color: '#475569', filter: 'blur(2px)' }}>{item}</div>
           ))}
         </div>
@@ -123,7 +181,6 @@ function PropertyPreview() {
           <p style={{ fontSize: '12px', color: '#475569', marginTop: '16px' }}>🔒 Secure · Money-back guarantee · info@sevennova.ai</p>
         </div>
 
-        {/* FOUNDER */}
         <div style={{ marginTop: '32px', padding: '20px 24px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', fontSize: '13px', color: '#475569', lineHeight: 1.8, borderLeft: '3px solid #f5a623' }}>
           <strong style={{ color: '#94a3b8' }}>Why SevenNova.ai exists:</strong> Our founder purchased a $1.7M property with hidden LADBS violations no platform detected. We built this so it never happens to you.
         </div>
@@ -138,7 +195,7 @@ export default function PropertyPage() {
     <Suspense fallback={
       <div style={{ background: '#0a0e1a', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontFamily: 'Inter, system-ui, sans-serif', flexDirection: 'column', gap: '16px' }}>
         <div style={{ width: '40px', height: '40px', border: '3px solid rgba(245,166,35,0.2)', borderTop: '3px solid #f5a623', borderRadius: '50%' }} />
-        <p>Analyzing property...</p>
+        <p>Scanning LADBS records...</p>
       </div>
     }>
       <PropertyPreview />
