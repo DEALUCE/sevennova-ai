@@ -27,8 +27,9 @@ function parseAddress(address: string) {
 function getRiskFromPermits(permits: PermitRecord[], inspections: InspectionRecord[]) {
   const expired = permits.filter(p => p.latest_status?.toLowerCase().includes('expired') || p.latest_status?.toLowerCase().includes('cancel')).length
   const denied = inspections.filter(i => i.result?.toLowerCase().includes('fail') || i.result?.toLowerCase().includes('denied')).length
-  if (expired > 2 || denied > 1) return { risk: 'HIGH', color: '#ef4444' }
-  if (expired > 0 || denied > 0) return { risk: 'MEDIUM', color: '#f59e0b' }
+  const openIssued = permits.filter(p => p.latest_status?.toLowerCase() === 'issued').length
+  if (expired > 2 || denied > 1 || openIssued > 4) return { risk: 'HIGH', color: '#ef4444' }
+  if (expired > 0 || denied > 0 || openIssued > 1) return { risk: 'MEDIUM', color: '#f59e0b' }
   return { risk: 'LOW', color: '#10b981' }
 }
 
@@ -62,8 +63,9 @@ function PropertyPreview() {
         const inspections: InspectionRecord[] = inspectRes.status === 'fulfilled' ? (Array.isArray(inspectRes.value) ? inspectRes.value : []) : []
 
         const { risk, color } = getRiskFromPermits(permits, inspections)
-        const zone = permits[0]?.zone || 'See full report'
-        const openCases = permits.filter(p => p.latest_status?.toLowerCase().includes('issued') || p.latest_status?.toLowerCase().includes('open')).length
+        // Don't trust zone from permits — it's the zone AT TIME OF PERMIT, not current zoning
+        const zone = 'Requires full report (zoning verification needed)'
+        const openCases = permits.filter(p => p.latest_status?.toLowerCase() === 'issued').length
 
         setData({ loading: false, error: '', permits, inspections, zone, risk, riskColor: color, openCases })
       } catch {
