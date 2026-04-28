@@ -1,5 +1,57 @@
 'use client'
 import { useState } from 'react'
+import Script from 'next/script'
+
+const SCHEMA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "RealEstateListing",
+      "name": "9432 & 9430 Oakmore Rd — Luxury Gated Compound | Beverlywood Los Angeles",
+      "description": "Gated 5-bedroom luxury compound in Beverlywood, Los Angeles. 4,492 sq ft combined, heated pool and spa, steam sauna, full kosher kitchen, detached guest house, EV charging, smart home. Walking distance to major shuls. FIFA 2026 available May–August 2026. Fully furnished at $34,999/month.",
+      "url": "https://sevennova.ai/luxury-rental",
+      "image": "https://sevennova.ai/images/DJI_20250122125313_0947_D.jpg",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "9432 & 9430 Oakmore Rd",
+        "addressLocality": "Los Angeles",
+        "addressRegion": "CA",
+        "postalCode": "90035",
+        "addressCountry": "US"
+      },
+      "geo": { "@type": "GeoCoordinates", "latitude": "34.05303", "longitude": "-118.38756" },
+      "numberOfRooms": 5,
+      "floorSize": { "@type": "QuantitativeValue", "value": 4492, "unitCode": "FTK" },
+      "amenityFeature": [
+        { "@type": "LocationFeatureSpecification", "name": "Heated Pool and Spa", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Steam Sauna", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Full Kosher Kitchen", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Detached Guest House", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "EV Charging Station", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Gated Security", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Smart Home", "value": true },
+        { "@type": "LocationFeatureSpecification", "name": "Walking Distance to Synagogue", "value": true }
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "34999",
+        "priceCurrency": "USD",
+        "priceSpecification": { "@type": "UnitPriceSpecification", "price": 34999, "priceCurrency": "USD", "unitText": "MON" }
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "Is this rental available for FIFA World Cup 2026?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. 9432 Oakmore Rd is available May 15 through August 15, 2026, covering the full FIFA World Cup 2026 window in Los Angeles. The property is fully furnished and sleeps up to 10 guests." } },
+        { "@type": "Question", "name": "Does the property have a kosher kitchen?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The property features a full kosher kitchen with dual sinks, dual ovens, and a gourmet island setup. It is located in the heart of the Beverlywood Jewish neighborhood, walking distance to major shuls." } },
+        { "@type": "Question", "name": "How far is the property from synagogues?", "acceptedAnswer": { "@type": "Answer", "text": "The property is located in Beverlywood (90035), one of Los Angeles's premier Jewish neighborhoods, and is walking distance to multiple major synagogues. Circle Park, popular with families, is a 3-minute walk." } },
+        { "@type": "Question", "name": "What is the monthly rental price?", "acceptedAnswer": { "@type": "Answer", "text": "The monthly rental price is $34,999 fully furnished. This includes use of both the main 5-bedroom residence and the detached guest house for a combined 4,492 sq ft of living space." } },
+        { "@type": "Question", "name": "Is the property pet friendly?", "acceptedAnswer": { "@type": "Answer", "text": "Pets are considered on a case by case basis. Please contact us at 424-272-5935 or info@sevennova.ai to discuss your needs." } },
+        { "@type": "Question", "name": "What is the minimum lease term?", "acceptedAnswer": { "@type": "Answer", "text": "The minimum lease term is 30 days. The preferred term is 3 to 12 months. The property is available for FIFA 2026 from May 15 to August 15, 2026." } }
+      ]
+    }
+  ]
+}
 
 const AMENITIES = [
   { icon: '🏊', label: 'Heated Pool & Spa', sub: 'Gas-heated, filtered' },
@@ -75,6 +127,8 @@ export default function LuxuryRental() {
           </a>
         </div>
       </nav>
+
+      <Script id="schema-org" type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
 
       {/* HERO IMAGE SWITCHER */}
       <section style={{ position: 'relative', height: '75vh', minHeight: '500px', overflow: 'hidden' }}>
@@ -202,6 +256,25 @@ export default function LuxuryRental() {
             <a href="mailto:dan.issak@gmail.com" style={{ color: '#64748b' }}>dan.issak@gmail.com</a>
           </div>
         </div>
+      </section>
+
+      {/* FAQ — SEO + AI Search */}
+      <section style={{ maxWidth: '800px', margin: '0 auto', padding: '80px 40px' }}>
+        <p style={{ color: '#f5a623', fontSize: '11px', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '16px', textAlign: 'center' }}>FAQ</p>
+        <h2 style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '-1px', textAlign: 'center', marginBottom: '48px' }}>Frequently Asked Questions</h2>
+        {[
+          { q: 'Is this rental available for FIFA World Cup 2026?', a: 'Yes. The property is available May 15 through August 15, 2026, covering the full FIFA World Cup 2026 window in Los Angeles. The property is fully furnished and sleeps up to 10 guests across the main house and guest house.' },
+          { q: 'Does the property have a kosher kitchen?', a: 'Yes. The property features a full kosher kitchen with dual sinks, dual ovens, and a gourmet island. It is located in the heart of the Beverlywood Jewish neighborhood, walking distance to major shuls.' },
+          { q: 'How far is the property from synagogues?', a: 'The property is in Beverlywood (90035), one of LA\'s premier Jewish neighborhoods, walking distance to multiple major synagogues. Circle Park is a 3-minute walk — perfect for families with young children.' },
+          { q: 'What is the monthly rental price?', a: 'The monthly rental price is $34,999 fully furnished, including both the main 5-bedroom residence and the detached guest house — 4,492 sq ft combined.' },
+          { q: 'What is the minimum lease term?', a: 'The minimum lease term is 30 days. Preferred term is 3–12 months. Available for FIFA 2026: May 15 – August 15, 2026.' },
+          { q: 'How do I schedule a showing?', a: 'Contact Daniel Issak directly at 424-272-5935 or info@sevennova.ai. Showings are by appointment only.' },
+        ].map((item, i) => (
+          <div key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.07)', padding: '24px 0' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f1f5f9', marginBottom: '10px' }}>{item.q}</h3>
+            <p style={{ fontSize: '14px', color: '#64748b', lineHeight: 1.8 }}>{item.a}</p>
+          </div>
+        ))}
       </section>
 
       {/* FOOTER */}
