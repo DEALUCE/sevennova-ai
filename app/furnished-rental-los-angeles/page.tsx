@@ -57,6 +57,15 @@ export default function FurnishedRentalPage() {
           View Full Property & Schedule Tour →
         </Link>
         <p style={{ fontSize: '13px', color: '#475569', marginTop: '12px' }}>Call: <a href="tel:424-272-5935" style={{ color: '#f5a623' }}>424-272-5935</a> · <a href="mailto:info@sevennova.ai" style={{ color: '#f5a623' }}>info@sevennova.ai</a> · DRE #02037760</p>
+
+        <div style={{ marginTop: '64px', paddingTop: '40px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <p style={{ fontSize: '12px', color: '#475569', marginBottom: '16px', textTransform: 'uppercase', letterSpacing: '2px' }}>Also Browse</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+            {[['Beverlywood Luxury Rental', '/beverlywood-luxury-rental'], ['Kosher Rental LA', '/kosher-rental-los-angeles'], ['FIFA 2026 Rental', '/fifa-2026-rental-los-angeles'], ['Luxury Rental 90035', '/luxury-rental-90035'], ['Full Listing', '/luxury-rental']].map(([label, href]) => (
+              <Link key={href} href={href} style={{ fontSize: '13px', color: '#f5a623', textDecoration: 'none', border: '1px solid rgba(245,166,35,0.3)', borderRadius: '8px', padding: '6px 14px' }}>{label}</Link>
+            ))}
+          </div>
+        </div>
       </div>
 
       <footer style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '32px 40px', textAlign: 'center' }}>
