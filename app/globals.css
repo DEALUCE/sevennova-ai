@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --gold: #f5a623;
+  --navy: #0a0e1a;
+  --navy2: #111827;
+  --accent: #1e3a5f;
+  --background: #0a0e1a;
+  --foreground: #e2e8f0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--navy);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #f5a623 0%, #f9d423 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glass {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+}
+
+.glow {
+  box-shadow: 0 0 40px rgba(245, 166, 35, 0.15);
+}
