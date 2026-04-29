@@ -15,7 +15,7 @@ const schema = {
   "description": "Gated 5BR luxury compound available for FIFA World Cup 2026. May 15 – August 15, 2026. Heated pool, fully furnished, Beverlywood Los Angeles. $34,999/mo.",
   "url": "https://sevennova.ai/fifa-2026-rental-los-angeles",
   "address": { "@type": "PostalAddress", "streetAddress": "9432 & 9430 Oakmore Rd", "addressLocality": "Los Angeles", "addressRegion": "CA", "postalCode": "90035", "addressCountry": "US" },
-  "offers": { "@type": "Offer", "price": "34999", "priceCurrency": "USD", "availabilityStarts": "2026-05-15", "availabilityEnds": "2026-08-15" }
+  "offers": { "@type": "Offer", "price": "34999", "priceCurrency": "USD", "availableFrom": "2026-05-15", "availableThrough": "2026-08-15" }
 }
 
 export default function FIFAPage() {
