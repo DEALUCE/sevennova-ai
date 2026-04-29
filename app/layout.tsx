@@ -5,12 +5,13 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "SevenNova.ai — Next-Generation AI Real Estate Intelligence",
-  description: "The most advanced AI platform for real estate. Instant property analysis, zoning intelligence, market predictions, and investment insights powered by artificial intelligence.",
-  keywords: "AI real estate, property search, zoning analysis, real estate AI, property intelligence, investment analysis",
+  title: "SevenNova.ai — Luxury Rentals & AI Real Estate Intelligence Los Angeles",
+  description: "Luxury furnished rentals in Los Angeles and AI-powered property intelligence. Featured: 5BR gated compound in Beverlywood, kosher kitchen, heated pool. $34,999/mo.",
+  keywords: "luxury rental Los Angeles, AI real estate, Beverlywood rental, kosher rental LA, FIFA 2026 rental Los Angeles",
+  alternates: { canonical: "https://sevennova.ai" },
   openGraph: {
-    title: "SevenNova.ai — AI Real Estate Intelligence",
-    description: "Next generation of real estate powered by AI. Search, analyze, and invest smarter.",
+    title: "SevenNova.ai — Luxury Rentals & AI Real Estate Los Angeles",
+    description: "Luxury furnished rentals in Los Angeles and AI-powered property intelligence.",
     url: "https://sevennova.ai",
     siteName: "SevenNova.ai",
     type: "website",

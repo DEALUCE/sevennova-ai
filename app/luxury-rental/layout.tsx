@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: '9432 Oakmore Rd — Luxury Furnished Rental Beverlywood Los Angeles | $34,999/mo',
-  description: 'Gated 5BR/6BA luxury compound in Beverlywood, Los Angeles. 4,492 sq ft, heated pool, steam sauna, full kosher kitchen, guest house, EV charging. Walking distance to shuls. FIFA 2026 available May–Aug 2026. $34,999/mo fully furnished.',
+  title: 'Luxury Furnished Rental Beverlywood LA | 5BR $34,999/mo',
+  description: 'Gated 5BR/6BA luxury compound in Beverlywood. 4,492 sq ft, heated pool, kosher kitchen, guest house. FIFA 2026 available May–Aug 2026. $34,999/mo fully furnished.',
   keywords: 'luxury furnished rental Los Angeles, Beverlywood luxury rental, kosher kitchen rental LA, FIFA 2026 rental Los Angeles, luxury home rental 90035, gated compound rental Beverly Hills adjacent, Jewish neighborhood rental LA, fully furnished luxury rental Pico Robertson',
   openGraph: {
     title: '9432 Oakmore Rd — Luxury Gated Compound | Beverlywood LA | $34,999/mo',

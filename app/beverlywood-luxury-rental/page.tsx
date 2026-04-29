@@ -54,8 +54,19 @@ export default function BeverlywoodPage() {
         </div>
 
         <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '20px' }}>About Beverlywood</h2>
+        <p style={{ color: '#64748b', lineHeight: 1.9, marginBottom: '20px', fontSize: '15px' }}>
+          Beverlywood (ZIP 90035) is one of Los Angeles's most sought-after Jewish neighborhoods, bordered by Beverly Hills, Century City, and Pico-Robertson. The neighborhood is known for its tree-lined streets, strong community, proximity to major synagogues, and excellent schools. 9432 Oakmore Rd sits at the heart of Beverlywood — walking distance to multiple shuls, kosher restaurants on Pico Blvd, Circle Park, and minutes from Beverly Hills and Century City.
+        </p>
+        <p style={{ color: '#64748b', lineHeight: 1.9, marginBottom: '20px', fontSize: '15px' }}>
+          Beverlywood is bordered by Beverly Hills to the north, Culver City to the south, and the Pico-Robertson corridor to the east. Residents enjoy easy access to Cedars-Sinai Medical Center, Fox Studios, the 10 freeway, and Robertson Boulevard shopping. The neighborhood's walkability score is among the highest in west Los Angeles, making it ideal for Shabbat-observant families who need to reach synagogue on foot.
+        </p>
         <p style={{ color: '#64748b', lineHeight: 1.9, marginBottom: '32px', fontSize: '15px' }}>
-          Beverlywood (ZIP 90035) is one of Los Angeles's most sought-after Jewish neighborhoods, bordered by Beverly Hills, Century City, and Pico-Robertson. The neighborhood is known for its tree-lined streets, strong community, proximity to major synagogues, and excellent schools. 9432 Oakmore Rd sits at the heart of Beverlywood — walking distance to multiple shuls, Kosher restaurants on Pico Blvd, Circle Park, and minutes from Beverly Hills and Century City.
+          The Beverlywood luxury rental market is extremely limited. Gated compounds with full kosher kitchens, heated pools, and guest houses rarely come to market as furnished rentals. 9432 Oakmore Rd represents a one-of-a-kind opportunity for families, executives, and international visitors seeking a private, fully equipped home in the heart of Jewish Los Angeles. The property is listed by Daniel Issak, DRE #02037760, The Issak Group.
+        </p>
+
+        <h2 style={{ fontSize: '24px', fontWeight: 900, marginBottom: '16px' }}>Beverlywood Rental Market</h2>
+        <p style={{ color: '#64748b', lineHeight: 1.9, marginBottom: '32px', fontSize: '15px' }}>
+          Furnished luxury rentals in Beverlywood typically rent for $20,000–$45,000 per month depending on size, amenities, and location. The 90035 ZIP code has seen consistent demand from Jewish families relocating from New York, Israel, and Mexico City, as well as entertainment industry executives working at nearby Fox Studios and Netflix. FIFA World Cup 2026, hosted at SoFi Stadium just 15 minutes away, is expected to drive a significant spike in demand for executive-level furnished housing throughout west Los Angeles from May through August 2026.
         </p>
 
         <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '20px' }}>Why This is Beverlywood's Best Rental</h2>
