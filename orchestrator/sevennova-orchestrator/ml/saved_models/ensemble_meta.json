@@ -1,0 +1,25 @@
+{
+  "r2": 0.9876733845240377,
+  "mae": 141832.56139399475,
+  "mape_pct": 5.374683714618519,
+  "n_train": 2550,
+  "n_test": 450,
+  "feature_cols": [
+    "sqft",
+    "lot_sqft",
+    "year_built",
+    "age",
+    "bedrooms",
+    "bathrooms",
+    "stories",
+    "garage",
+    "pool",
+    "toc_tier",
+    "prop_type_n",
+    "units",
+    "zip_psf",
+    "price_per_bed",
+    "bath_bed_ratio",
+    "sqft_per_unit"
+  ]
+}
