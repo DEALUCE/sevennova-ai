@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SevenNova.ai — {{ report.address.full_address }}</title>
+<style>
+:root {
+  --bg: #04080f;
+  --surface: #080e1a;
+  --card: #0c1422;
+  --border: #162035;
+  --border2: #1e2d4a;
+  --accent: #00d4ff;
+  --green: #00e5a0;
+  --red: #ff4757;
+  --gold: #f0b429;
+  --text: #e8f0fe;
+  --muted: #5a7090;
+  --mono: 'Courier New', monospace;
+  --sans: 'Arial', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+/* HEADER */
+.header { background: linear-gradient(135deg, #0a1628, #0f1e3a); border-bottom: 1px solid var(--border); padding: 40px 0 32px; }
+.logo { font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 20px; }
+.address-title { font-size: 28px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+.address-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 20px; }
+.meta-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }
+.meta-item { display: flex; flex-direction: column; gap: 2px; }
+.meta-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; font-family: var(--mono); }
+.meta-value { font-size: 14px; color: var(--text); font-weight: 600; }
+.deal-score-badge { width: 80px; height: 80px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-left: auto;
+  background: {% if report.deal_score.value in ['A+','A'] %}linear-gradient(135deg,#00e5a0,#00b37d){% elif report.deal_score.value in ['B+','B'] %}linear-gradient(135deg,#00d4ff,#0099cc){% elif report.deal_score.value == 'C' %}linear-gradient(135deg,#f0b429,#cc8800){% else %}linear-gradient(135deg,#f97316,#ef4444){% endif %};
+  box-shadow: 0 0 30px rgba(0,0,0,0.4); flex-shrink: 0; }
+.deal-score-letter { font-family: var(--mono); font-size: 32px; font-weight: 700; color: #fff; line-height: 1; }
+.deal-score-label { font-size: 8px; color: rgba(255,255,255,0.7); letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
+
+/* ALERTS */
+.alert { border-left: 4px solid var(--red); background: rgba(255,71,87,0.06); border-radius: 6px; padding: 12px 16px; margin: 16px 0; font-size: 13px; color: #ff9aa5; }
+.alert strong { color: var(--red); }
+.warn { border-left: 4px solid var(--gold); background: rgba(240,180,41,0.06); border-radius: 6px; padding: 12px 16px; margin: 16px 0; font-size: 13px; color: #fde68a; }
+
+/* SECTIONS */
+.section { padding: 28px 0; border-bottom: 1px solid var(--border); }
+.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.section-num { font-family: var(--mono); font-size: 9px; color: var(--accent); background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); padding: 3px 8px; border-radius: 3px; letter-spacing: 1px; }
+.section-title { font-size: 17px; font-weight: 700; color: #fff; }
+
+/* CARDS */
+.cards-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+.cards-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
+.cards-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.card-red { border-left: 3px solid var(--red); }
+.card-green { border-left: 3px solid var(--green); }
+.card-accent { border-left: 3px solid var(--accent); }
+.card-gold { border-left: 3px solid var(--gold); }
+.card-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; font-family: var(--mono); margin-bottom: 6px; }
+.card-value { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 2px; font-family: var(--mono); }
+.card-sub { font-size: 11px; color: var(--muted); }
+
+/* TABLES */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { background: rgba(0,212,255,0.05); padding: 9px 12px; text-align: left; font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 400; }
+.data-table td { padding: 9px 12px; border-bottom: 1px solid rgba(22,32,53,0.5); color: var(--text); }
+.data-table tr:nth-child(even) td { background: rgba(12,20,34,0.4); }
+.mono { font-family: var(--mono); font-size: 11px; }
+
+/* BADGES */
+.badge { display: inline-block; font-family: var(--mono); font-size: 8px; letter-spacing: 1px; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; }
+.badge-green { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.25); color: #6ee7b7; }
+.badge-red { background: rgba(255,71,87,0.1); border: 1px solid rgba(255,71,87,0.25); color: #fca5a5; }
+.badge-yellow { background: rgba(240,180,41,0.1); border: 1px solid rgba(240,180,41,0.25); color: #fde68a; }
+.badge-blue { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); color: #7dd3fc; }
+.badge-unverified { background: rgba(90,112,144,0.1); border: 1px solid rgba(90,112,144,0.2); color: var(--muted); }
+
+/* PRO FORMA */
+.proforma { background: var(--card); border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; }
+.proforma-header { background: rgba(0,212,255,0.05); padding: 10px 14px; font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); border-bottom: 1px solid var(--border); }
+.proforma-row { display: flex; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid rgba(22,32,53,0.3); font-size: 12px; }
+.proforma-row:last-child { border-bottom: none; }
+.proforma-key { color: #94a3b8; }
+.proforma-val { font-family: var(--mono); font-size: 11px; }
+.proforma-total { background: rgba(0,212,255,0.04); border-top: 1px solid var(--border); font-weight: 600; }
+.proforma-total .proforma-key { color: var(--text); }
+.proforma-total .proforma-val { color: var(--accent); }
+.text-red { color: var(--red); }
+.text-green { color: var(--green); }
+.text-gold { color: var(--gold); }
+
+/* SKILLS */
+.skill-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.skill-tag { font-family: var(--mono); font-size: 8px; padding: 3px 8px; border-radius: 3px; letter-spacing: 1px; text-transform: uppercase; }
+.skill-active { background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25); color: #a5b4fc; }
+
+/* STRATEGY */
+.strategy-list { display: flex; flex-direction: column; gap: 10px; }
+.strategy-item { display: flex; gap: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.strategy-rank { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--accent); flex-shrink: 0; line-height: 1; }
+.strategy-name { font-weight: 600; color: #fff; margin-bottom: 4px; font-size: 14px; }
+.strategy-desc { font-size: 12px; color: var(--muted); }
+
+/* RISK GRID */
+.risk-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; }
+.risk-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+.risk-dot { width: 10px; height: 10px; border-radius: 50%; margin: 0 auto 8px; }
+.risk-dot.red { background: var(--red); }
+.risk-dot.yellow { background: var(--gold); }
+.risk-dot.green { background: var(--green); }
+.risk-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.risk-rating { font-size: 11px; font-weight: 600; font-family: var(--mono); }
+
+/* FOOTER */
+.footer { background: var(--surface); border-top: 1px solid var(--border); padding: 24px 0; margin-top: 32px; }
+.disclaimer { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="container">
+    <div class="logo">SevenNova.ai // Investment Intelligence Report</div>
+    <h1 class="address-title">{{ report.address.full_address }}</h1>
+    <div class="address-sub">
+      {% if report.address.apn %}APN: {{ report.address.apn }} · {% endif %}
+      Report ID: {{ report.request_id }} · Generated: {{ report.generated_at.strftime('%B %d, %Y') }} · Tier: {{ report.tier.value.upper() }}
+    </div>
+    <div class="meta-row">
+      <div class="meta-item">
+        <div class="meta-label">Deal Score</div>
+        <div class="meta-value">{{ report.deal_score.value }}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Overall Confidence</div>
+        <div class="meta-value">{{ "%.0f"|format(report.overall_confidence) }}%</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Data Freshness</div>
+        <div class="meta-value">{{ report.data_freshness_summary.value }}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Skills Activated</div>
+        <div class="meta-value">{{ report.skills_activated|selectattr('activated')|list|length }}/15</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Generation Time</div>
+        <div class="meta-value">{{ "%.1f"|format(report.generation_time_seconds or 0) }}s</div>
+      </div>
+      <div class="deal-score-badge">
+        <div class="deal-score-letter">{{ report.deal_score.value }}</div>
+        <div class="deal-score-label">Score</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- RED FLAGS -->
+{% if report.red_flags %}
+{% for flag in report.red_flags %}
+<div class="alert"><strong>⚠ FLAG:</strong> {{ flag }}</div>
+{% endfor %}
+{% endif %}
+
+<!-- SKILLS ACTIVATED -->
+<div class="section" style="padding: 16px 0; border-bottom: none;">
+  <div class="skill-bar">
+    {% for skill in report.skills_activated %}
+    <span class="skill-tag {% if skill.activated %}skill-active{% else %}badge-red{% endif %}">
+      {{ skill.skill_name }}{% if not skill.activated %} ✗{% endif %}
+    </span>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- SECTION 1: EXECUTIVE SUMMARY -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">01</div>
+    <div class="section-title">Executive Summary</div>
+  </div>
+  <p style="font-size: 14px; color: var(--text); line-height: 1.7; margin-bottom: 12px;">{{ report.executive_summary }}</p>
+  {% if report.investment_thesis %}
+  <p style="font-size: 13px; color: var(--muted); line-height: 1.7; font-style: italic;">{{ report.investment_thesis }}</p>
+  {% endif %}
+</div>
+
+<!-- SECTION 2: ZONING INTELLIGENCE -->
+{% if report.zoning %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">02</div>
+    <div class="section-title">Zoning & Development Intelligence</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-accent">
+      <div class="card-label">Zoning Code</div>
+      <div class="card-value" style="font-size:18px;">{{ report.zoning.zoning_code.value }}</div>
+      <div class="card-sub"><span class="badge badge-{{ 'green' if report.zoning.zoning_code.confidence >= 80 else 'yellow' }}">{{ "%.0f"|format(report.zoning.zoning_code.confidence) }}% conf</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Max FAR</div>
+      <div class="card-value" style="font-size:18px;">{{ report.zoning.max_far.value }}</div>
+      <div class="card-sub">Floor-area ratio</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Height Limit</div>
+      <div class="card-value" style="font-size:18px;">{{ report.zoning.height_limit_ft.value }} ft</div>
+      <div class="card-sub">Estimated</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Max Units (TOC)</div>
+      <div class="card-value" style="font-size:18px;">{{ report.zoning.max_units_toc.value }}</div>
+      <div class="card-sub">With density bonus</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Parameter</th><th>Value</th><th>Pathway</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>TOC Tier</td><td class="mono">{{ report.zoning.toc_tier.value }}</td><td>TOC Program</td><td><span class="badge badge-{{ 'green' if report.zoning.toc_tier.value != 'None' else 'red' }}">{{ 'Eligible' if report.zoning.toc_tier.value != 'None' else 'Not Eligible' }}</span></td></tr>
+      <tr><td>ED1 Eligible</td><td class="mono">{{ report.zoning.ed1_eligible.value }}</td><td>Executive Directive 1</td><td><span class="badge badge-{{ 'green' if report.zoning.ed1_eligible.value else 'red' }}">{{ 'Yes' if report.zoning.ed1_eligible.value else 'No' }}</span></td></tr>
+      <tr><td>AB2011 Eligible</td><td class="mono">{{ report.zoning.ab2011_eligible.value }}</td><td>Commercial→Residential</td><td><span class="badge badge-{{ 'green' if report.zoning.ab2011_eligible.value else 'red' }}">{{ 'Yes' if report.zoning.ab2011_eligible.value else 'No' }}</span></td></tr>
+      <tr><td>RSO Coverage</td><td class="mono">{{ report.zoning.rso_covered.value }}</td><td>Rent Stabilization</td><td><span class="badge badge-{{ 'red' if report.zoning.rso_covered.value else 'green' }}">{{ 'Applies' if report.zoning.rso_covered.value else 'No RSO' }}</span></td></tr>
+      <tr><td>LADBS Violations</td><td class="mono">{{ report.zoning.ladbs_violations.value }}</td><td>LADBS</td><td><span class="badge badge-{{ 'red' if 'active' in (report.zoning.ladbs_violations.value|string|lower) else 'green' }}">{{ 'Active' if 'active' in (report.zoning.ladbs_violations.value|string|lower) else 'Clear' }}</span></td></tr>
+      <tr><td>Buildable SF</td><td class="mono">{{ "{:,}".format(report.zoning.buildable_sf.value) }}</td><td>FAR × Lot</td><td><span class="badge badge-unverified">Estimate</span></td></tr>
+      <tr><td>Units (By-Right)</td><td class="mono">{{ report.zoning.max_units_by_right.value }}</td><td>No bonus</td><td><span class="badge badge-blue">Base</span></td></tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- SECTION 3: VALUATION -->
+{% if report.valuation %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">03</div>
+    <div class="section-title">Ensemble Valuation & Climate-Adjusted AVM</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-accent">
+      <div class="card-label">Ensemble Estimate</div>
+      <div class="card-value">${{ "{:,}".format(report.valuation.ensemble_estimate.value) }}</div>
+      <div class="card-sub">XGB+LGB+CatBoost blend</div>
+    </div>
+    <div class="card card-red">
+      <div class="card-label">Legal Value</div>
+      <div class="card-value" style="color:var(--red)">${{ "{:,}".format(report.valuation.legal_value.value) }}</div>
+      <div class="card-sub">As-is, legal units only</div>
+    </div>
+    <div class="card card-gold">
+      <div class="card-label">Climate-Adjusted</div>
+      <div class="card-value" style="color:var(--gold)">${{ "{:,}".format(report.valuation.climate_adjusted_value.value) }}</div>
+      <div class="card-sub">After climate haircut</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Cap Rate</div>
+      <div class="card-value">{{ "%.1f"|format(report.valuation.cap_rate.value * 100) }}%</div>
+      <div class="card-sub">Submarket estimate</div>
+    </div>
+  </div>
+  {% if report.valuation.diminution_estimate %}
+  <div style="background: rgba(255,71,87,0.06); border: 1px solid rgba(255,71,87,0.25); border-left: 4px solid var(--red); border-radius: 6px; padding: 14px 18px; margin-top: 12px;">
+    <div style="font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; font-family: var(--mono); margin-bottom: 4px;">Diminution of Value</div>
+    <div style="font-size: 28px; font-weight: 700; color: var(--red); font-family: var(--mono);">${{ "{:,}".format(report.valuation.diminution_estimate.value) }}</div>
+    <div style="font-size: 12px; color: #fca5a5; margin-top: 4px;">Potential litigation recovery basis</div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- SECTION 4: DISTRESS RADAR -->
+{% if report.distress %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">04</div>
+    <div class="section-title">Distressed Asset Radar</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-{{ 'red' if report.distress.distress_score.value >= 70 else 'gold' if report.distress.distress_score.value >= 40 else 'green' }}">
+      <div class="card-label">Distress Score</div>
+      <div class="card-value">{{ report.distress.distress_score.value }}/100</div>
+      <div class="card-sub">{{ 'HIGH DISTRESS' if report.distress.distress_score.value >= 70 else 'MEDIUM' if report.distress.distress_score.value >= 40 else 'LOW' }}</div>
+    </div>
+    <div class="card card-{{ 'red' if report.distress.dscr_estimate.value < 1.0 else 'green' }}">
+      <div class="card-label">DSCR Estimate</div>
+      <div class="card-value" style="color: {{ 'var(--red)' if report.distress.dscr_estimate.value < 1.0 else 'var(--green)' }}">{{ "%.2f"|format(report.distress.dscr_estimate.value) }}</div>
+      <div class="card-sub">Min 1.25 required</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Event Window</div>
+      <div class="card-value">{{ report.distress.event_window_months.value }}mo</div>
+      <div class="card-sub">Distress timeline</div>
+    </div>
+    <div class="card card-{{ 'red' if report.distress.ladbs_order_active.value else 'green' }}">
+      <div class="card-label">LADBS Order</div>
+      <div class="card-value" style="font-size:16px; color: {{ 'var(--red)' if report.distress.ladbs_order_active.value else 'var(--green)' }}">{{ 'ACTIVE' if report.distress.ladbs_order_active.value else 'CLEAR' }}</div>
+      <div class="card-sub">Code violation status</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- SECTION 5: ENTITLEMENT -->
+{% if report.entitlement %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">05</div>
+    <div class="section-title">Entitlement Velocity</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-accent">
+      <div class="card-label">Best Pathway</div>
+      <div class="card-value" style="font-size:16px;">{{ report.entitlement.best_pathway.value }}</div>
+      <div class="card-sub">Recommended route</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Approval Probability</div>
+      <div class="card-value">{{ "%.0f"|format(report.entitlement.approval_probability.value) }}%</div>
+      <div class="card-sub">Model estimate</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Timeline</div>
+      <div class="card-value">{{ report.entitlement.timeline_months.value }}mo</div>
+      <div class="card-sub">Estimated approval</div>
+    </div>
+    <div class="card card-{{ 'red' if report.entitlement.irr_impact_pct.value < -3 else 'gold' }}">
+      <div class="card-label">IRR Impact</div>
+      <div class="card-value">{{ "%.1f"|format(report.entitlement.irr_impact_pct.value) }}%</div>
+      <div class="card-sub">vs. by-right baseline</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- SECTION 6: CLIMATE -->
+{% if report.climate %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">06</div>
+    <div class="section-title">Climate Risk Assessment</div>
+  </div>
+  <div class="cards-4">
+    <div class="card">
+      <div class="card-label">Flood Risk</div>
+      <div class="card-value">{{ report.climate.flood_risk_score.value }}/10</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Wildfire Risk</div>
+      <div class="card-value">{{ report.climate.wildfire_risk_score.value }}/10</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Heat Risk</div>
+      <div class="card-value">{{ report.climate.heat_risk_score.value }}/10</div>
+    </div>
+    <div class="card card-{{ 'red' if report.climate.climate_haircut_pct.value > 10 else 'gold' }}">
+      <div class="card-label">Climate Haircut</div>
+      <div class="card-value">{{ "%.1f"|format(report.climate.climate_haircut_pct.value) }}%</div>
+      <div class="card-sub">AVM reduction</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- SECTION 7: STRATEGIC RECOMMENDATIONS -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">07</div>
+    <div class="section-title">Strategic Recommendations</div>
+  </div>
+  <div class="strategy-list">
+    {% for rec in report.strategic_recommendations %}
+    <div class="strategy-item">
+      <div class="strategy-rank">{{ loop.index }}</div>
+      <div>
+        <div class="strategy-name">Priority Action #{{ loop.index }}</div>
+        <div class="strategy-desc">{{ rec }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- SECTION 8: RISK SUMMARY -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">08</div>
+    <div class="section-title">Risk Summary</div>
+  </div>
+  <p style="font-size: 13px; color: var(--muted); line-height: 1.7; margin-bottom: 16px;">{{ report.risk_summary }}</p>
+</div>
+
+<!-- SECTION 9: ASSUMPTIONS & UNVERIFIED -->
+{% if report.assumptions or report.unverified_items %}
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">09</div>
+    <div class="section-title">Assumptions & Unverified Data</div>
+  </div>
+  {% if report.assumptions %}
+  <div class="warn" style="margin-bottom: 12px;">
+    <strong>Assumptions [ASSUMPTION]:</strong><br>
+    {% for a in report.assumptions %}<div style="margin-top:4px;">• {{ a }}</div>{% endfor %}
+  </div>
+  {% endif %}
+  {% if report.unverified_items %}
+  <div class="alert">
+    <strong>Unverified [UNVERIFIED] — verify before relying:</strong><br>
+    {% for u in report.unverified_items %}<div style="margin-top:4px;">• {{ u }}</div>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- SKILL LOG -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">10</div>
+    <div class="section-title">Skill Activation Log</div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Skill</th><th>Status</th><th>Confidence</th><th>Freshness</th><th>Duration</th></tr></thead>
+    <tbody>
+      {% for skill in report.skills_activated %}
+      <tr>
+        <td class="mono">{{ skill.skill_name }}</td>
+        <td><span class="badge badge-{{ 'green' if skill.activated else 'red' }}">{{ 'Active' if skill.activated else 'Failed' }}</span></td>
+        <td class="mono">{{ "%.0f"|format(skill.confidence) }}%</td>
+        <td><span class="badge badge-unverified">{{ skill.data_freshness.value }}</span></td>
+        <td class="mono">{{ skill.duration_ms or '—' }}ms</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+</div><!-- end container -->
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="disclaimer">
+    <strong>DISCLAIMER</strong><br>
+    {{ report.disclaimer }}<br><br>
+    <span style="opacity:0.6;">Report ID: {{ report.request_id }} · Generated: {{ report.generated_at.isoformat() }} · Skills: {{ report.skills_activated|selectattr('activated')|list|length }}/15 · Confidence: {{ "%.0f"|format(report.overall_confidence) }}% · Data: {{ report.data_freshness_summary.value }}</span>
+  </div>
+</div>
+
+</body>
+</html>

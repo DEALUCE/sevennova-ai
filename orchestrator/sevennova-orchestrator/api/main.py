@@ -27,6 +27,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from core.models import PropertyAddress, ReportRequest, ReportTier
 from core.orchestrator import SevenNovaOrchestrator
+from api.report_routes import router as report_router
 
 log = structlog.get_logger()
 
@@ -70,6 +71,9 @@ app.add_middleware(
 
 # Prometheus metrics
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+# Report generator routes
+app.include_router(report_router)
 
 
 # ── REQUEST / RESPONSE SCHEMAS ────────────────────────────────────────────
