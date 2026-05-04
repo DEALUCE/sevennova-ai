@@ -28,6 +28,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from core.models import PropertyAddress, ReportRequest, ReportTier
 from core.orchestrator import SevenNovaOrchestrator
 from api.report_routes import router as report_router
+from api.stripe_routes import router as stripe_router
 
 log = structlog.get_logger()
 
@@ -74,6 +75,9 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 # Report generator routes
 app.include_router(report_router)
+
+# Stripe payment routes
+app.include_router(stripe_router)
 
 
 # ── REQUEST / RESPONSE SCHEMAS ────────────────────────────────────────────
