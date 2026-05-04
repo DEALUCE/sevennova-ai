@@ -1,0 +1,354 @@
+{
+  "source": "LA City Planning + LADBS — compiled for SevenNova RAG",
+  "freshness": "CACHED",
+  "last_updated": "2026-05-01",
+  "confidence": 85,
+  "disclaimer": "Verify all zoning rules with ZIMAS and LADBS before relying on this data.",
+
+  "zoning_codes": [
+    {
+      "code": "R1",
+      "name": "Single Family Residential",
+      "permitted_uses": ["single family dwelling", "accessory dwelling unit", "home occupation"],
+      "max_far": 0.6,
+      "height_limit_ft": 33,
+      "min_lot_sf": 5000,
+      "max_density": "1 unit per lot",
+      "toc_eligible": false,
+      "ed1_eligible": false,
+      "ab2011_eligible": false,
+      "rso_applies": false,
+      "notes": "ADU allowed by state law regardless of zone"
+    },
+    {
+      "code": "R2",
+      "name": "Two Family Residential",
+      "permitted_uses": ["single family", "two family dwelling", "ADU"],
+      "max_far": 0.6,
+      "height_limit_ft": 33,
+      "min_lot_sf": 5000,
+      "max_density": "2 units per lot",
+      "toc_eligible": false,
+      "ed1_eligible": false,
+      "ab2011_eligible": true,
+      "rso_applies": true,
+      "notes": "Pre-1978 units subject to RSO rent control"
+    },
+    {
+      "code": "R3",
+      "name": "Limited Multiple Residential",
+      "permitted_uses": ["multifamily residential", "assisted living", "boarding house"],
+      "max_far": 3.0,
+      "height_limit_ft": 45,
+      "min_lot_sf": 5000,
+      "max_density": "1 unit per 400 SF lot area",
+      "toc_eligible": true,
+      "ed1_eligible": true,
+      "ab2011_eligible": true,
+      "rso_applies": true,
+      "notes": "Most common multifamily zone in LA. TOC bonuses apply near transit."
+    },
+    {
+      "code": "R4",
+      "name": "Multiple Residential",
+      "permitted_uses": ["multifamily", "hotels", "hospitals"],
+      "max_far": 4.5,
+      "height_limit_ft": 75,
+      "min_lot_sf": 5000,
+      "max_density": "1 unit per 200 SF lot area",
+      "toc_eligible": true,
+      "ed1_eligible": true,
+      "ab2011_eligible": true,
+      "rso_applies": true,
+      "notes": "High density residential. Common near transit corridors."
+    },
+    {
+      "code": "C2",
+      "name": "Commercial",
+      "permitted_uses": ["retail", "office", "restaurant", "multifamily above ground floor"],
+      "max_far": 1.5,
+      "height_limit_ft": 45,
+      "min_lot_sf": null,
+      "max_density": "Per FAR — no unit count limit",
+      "toc_eligible": true,
+      "ed1_eligible": true,
+      "ab2011_eligible": true,
+      "rso_applies": false,
+      "notes": "Commercial zone allows residential. No RSO on new construction."
+    },
+    {
+      "code": "CM",
+      "name": "Commercial Manufacturing",
+      "permitted_uses": ["retail", "office", "light manufacturing", "multifamily", "wholesale"],
+      "max_far": 3.0,
+      "height_limit_ft": 45,
+      "min_lot_sf": null,
+      "max_density": "Per FAR",
+      "toc_eligible": true,
+      "ed1_eligible": true,
+      "ab2011_eligible": true,
+      "rso_applies": false,
+      "notes": "LACM variant. Jefferson Blvd corridor. Allows mixed commercial/residential."
+    },
+    {
+      "code": "M1",
+      "name": "Limited Industrial",
+      "permitted_uses": ["light manufacturing", "warehouse", "office", "limited retail"],
+      "max_far": 1.5,
+      "height_limit_ft": 45,
+      "min_lot_sf": null,
+      "max_density": "Industrial — residential not permitted by right",
+      "toc_eligible": false,
+      "ed1_eligible": false,
+      "ab2011_eligible": false,
+      "rso_applies": false,
+      "notes": "Residential requires zone change. Data center uses permitted."
+    }
+  ],
+
+  "toc_tiers": [
+    {
+      "tier": 1,
+      "transit_distance_ft": 2640,
+      "transit_type": "bus (frequent service)",
+      "density_bonus_pct": 22,
+      "max_incentives": 1,
+      "parking_reduction_pct": 0,
+      "affordable_requirement": "5% very low income OR 10% low income"
+    },
+    {
+      "tier": 2,
+      "transit_distance_ft": 1500,
+      "transit_type": "bus (frequent) or rail",
+      "density_bonus_pct": 32.5,
+      "max_incentives": 2,
+      "parking_reduction_pct": 0,
+      "affordable_requirement": "8% very low income OR 15% low income"
+    },
+    {
+      "tier": 3,
+      "transit_distance_ft": 1500,
+      "transit_type": "rail or BRT",
+      "density_bonus_pct": 50,
+      "max_incentives": 3,
+      "parking_reduction_pct": 50,
+      "affordable_requirement": "11% very low income OR 20% low income"
+    },
+    {
+      "tier": 4,
+      "transit_distance_ft": 750,
+      "transit_type": "rail or BRT (major hub)",
+      "density_bonus_pct": 80,
+      "max_incentives": 4,
+      "parking_reduction_pct": 100,
+      "affordable_requirement": "15% very low income OR 24% low income"
+    }
+  ],
+
+  "entitlement_pathways": [
+    {
+      "pathway": "By-Right",
+      "description": "Compliant with zoning — no discretionary approval needed",
+      "timeline_months": 3,
+      "approval_probability": 0.97,
+      "ceqa_required": false,
+      "public_hearing": false,
+      "irr_impact_pct": -0.5,
+      "notes": "Fastest path. Ministerial review only."
+    },
+    {
+      "pathway": "TOC",
+      "description": "Transit Oriented Communities density bonus",
+      "timeline_months": 12,
+      "approval_probability": 0.82,
+      "ceqa_required": false,
+      "public_hearing": false,
+      "irr_impact_pct": -2.1,
+      "notes": "Requires affordable units. Ministerial if meeting all criteria."
+    },
+    {
+      "pathway": "ED1",
+      "description": "Executive Directive 1 — 100% affordable, ministerial",
+      "timeline_months": 2,
+      "approval_probability": 0.95,
+      "ceqa_required": false,
+      "public_hearing": false,
+      "irr_impact_pct": -0.3,
+      "notes": "Fastest path for affordable projects. 100% affordable required."
+    },
+    {
+      "pathway": "AB2011",
+      "description": "Commercial to residential conversion — ministerial",
+      "timeline_months": 3,
+      "approval_probability": 0.90,
+      "ceqa_required": false,
+      "public_hearing": false,
+      "irr_impact_pct": -0.8,
+      "notes": "For commercial zoned land. No discretionary review."
+    },
+    {
+      "pathway": "CUP",
+      "description": "Conditional Use Permit — discretionary",
+      "timeline_months": 18,
+      "approval_probability": 0.68,
+      "ceqa_required": true,
+      "public_hearing": true,
+      "irr_impact_pct": -4.5,
+      "notes": "NIMBY risk. Avoid unless no other pathway."
+    },
+    {
+      "pathway": "Full EIR",
+      "description": "Environmental Impact Report — full discretionary",
+      "timeline_months": 36,
+      "approval_probability": 0.55,
+      "ceqa_required": true,
+      "public_hearing": true,
+      "irr_impact_pct": -8.5,
+      "notes": "Last resort. Very high cost ($500K+) and time risk."
+    }
+  ],
+
+  "ladbs_violation_codes": [
+    {
+      "code": "SEC 91.8602",
+      "name": "Substandard Building",
+      "description": "Building declared substandard under LAMC Section 91.8602",
+      "severity": "CRITICAL",
+      "distress_signal": true,
+      "typical_cure_cost_range": [50000, 400000],
+      "cure_timeline_months": 3,
+      "daily_fine_usd": 250,
+      "notes": "Case #1074040 type. Requires compliance or demolition."
+    },
+    {
+      "code": "SEC 12.21",
+      "name": "Illegal Unit / Unpermitted Construction",
+      "description": "Unit or structure built without permits",
+      "severity": "HIGH",
+      "distress_signal": true,
+      "typical_cure_cost_range": [15000, 150000],
+      "cure_timeline_months": 6,
+      "daily_fine_usd": 100,
+      "notes": "Common in older LA multifamily. Affects legal unit count."
+    },
+    {
+      "code": "SEC 91.1",
+      "name": "Structural Hazard",
+      "description": "Structural deficiency posing safety risk",
+      "severity": "CRITICAL",
+      "distress_signal": true,
+      "typical_cure_cost_range": [25000, 500000],
+      "cure_timeline_months": 2,
+      "daily_fine_usd": 500,
+      "notes": "May require immediate vacation of building."
+    },
+    {
+      "code": "SEC 91.3109",
+      "name": "Soft Story Retrofit Required",
+      "description": "Pre-1978 wood frame building requires seismic retrofit",
+      "severity": "MEDIUM",
+      "distress_signal": false,
+      "typical_cure_cost_range": [60000, 130000],
+      "cure_timeline_months": 12,
+      "daily_fine_usd": 0,
+      "notes": "Mandatory retrofit program. Deadline varies by building type."
+    },
+    {
+      "code": "RSO VIOLATION",
+      "name": "Rent Stabilization Ordinance Violation",
+      "description": "Illegal rent increase or eviction under LAMC 151",
+      "severity": "HIGH",
+      "distress_signal": true,
+      "typical_cure_cost_range": [5000, 50000],
+      "cure_timeline_months": 1,
+      "daily_fine_usd": 0,
+      "notes": "Triggers tenant claims. High litigation risk."
+    }
+  ],
+
+  "market_data": {
+    "la_metro_cap_rates_2025": {
+      "class_a_multifamily": 0.042,
+      "class_b_multifamily": 0.055,
+      "class_c_multifamily": 0.065,
+      "mixed_use": 0.052,
+      "industrial": 0.048,
+      "retail_strip": 0.062,
+      "office": 0.071,
+      "source": "CBRE, Marcus & Millichap Q4 2025",
+      "freshness": "CACHED"
+    },
+    "submarket_rent_2025": {
+      "west_adams_studio": 1450,
+      "west_adams_1br": 1850,
+      "west_adams_2br": 2400,
+      "koreatown_studio": 1650,
+      "koreatown_1br": 2100,
+      "koreatown_2br": 2800,
+      "culver_city_studio": 2200,
+      "culver_city_1br": 2800,
+      "culver_city_2br": 3500,
+      "downtown_la_studio": 1900,
+      "downtown_la_1br": 2400,
+      "downtown_la_2br": 3200,
+      "source": "Zumper, CoStar Q1 2026",
+      "freshness": "CACHED"
+    },
+    "vacancy_rates_2025": {
+      "south_la": 0.030,
+      "west_adams": 0.028,
+      "koreatown": 0.035,
+      "downtown_la": 0.082,
+      "culver_city": 0.042,
+      "source": "NorthMarq 2025",
+      "freshness": "CACHED"
+    }
+  },
+
+  "grants_incentives": [
+    {
+      "program": "LIHTC 4%",
+      "administrator": "California Tax Credit Allocation Committee (TCAC)",
+      "type": "Tax credit",
+      "value_per_unit": 27500,
+      "affordability_requirement": "20% at 50% AMI or 40% at 60% AMI",
+      "min_units": 10,
+      "difficulty": "MEDIUM",
+      "pairs_with": ["ED1", "Tax-Exempt Bonds", "AHSC"],
+      "notes": "Most accessible for small projects. Pairs with ED1."
+    },
+    {
+      "program": "LIHTC 9%",
+      "administrator": "TCAC",
+      "type": "Tax credit",
+      "value_per_unit": 32000,
+      "affordability_requirement": "100% affordable",
+      "min_units": 20,
+      "difficulty": "HARD",
+      "pairs_with": ["ED1", "AHSC"],
+      "notes": "Highly competitive. Small projects (<20 units) rarely win."
+    },
+    {
+      "program": "AHSC",
+      "administrator": "CARB / HCD",
+      "type": "Grant",
+      "value_per_unit": null,
+      "affordability_requirement": "Affordable + transit proximity",
+      "min_units": null,
+      "difficulty": "MEDIUM",
+      "pairs_with": ["LIHTC 4%", "ED1"],
+      "notes": "Strong fit for transit-adjacent affordable projects."
+    },
+    {
+      "program": "HOME/CDBG",
+      "administrator": "LACDA",
+      "type": "Grant/Loan",
+      "value_per_unit": null,
+      "affordability_requirement": "Low-to-moderate income",
+      "min_units": null,
+      "difficulty": "MEDIUM",
+      "pairs_with": ["LIHTC"],
+      "notes": "Check LACDA NOFA cycle. CD-10 has active allocations."
+    }
+  ]
+}
