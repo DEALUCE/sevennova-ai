@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, ReactNode } from 'react'
 
 const EXAMPLES = [
   '904 S Ardmore Ave, Los Angeles, CA 90006',
@@ -13,7 +13,7 @@ function pill(val: boolean, yes: string, no: string, yesColor = '#4caf7d', noCol
     : <span style={{ background: 'rgba(232,197,74,0.15)', color: noColor, padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{no}</span>
 }
 
-function Row({ k, v }: { k: string; v: React.ReactNode }) {
+function Row({ k, v }: { k: string; v: ReactNode }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 14 }}>
       <span style={{ color: '#64748b' }}>{k}</span>
@@ -22,7 +22,7 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
   )
 }
 
-function Card({ label, children }: { label: string; children: React.ReactNode }) {
+function Card({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ background: '#111827', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '22px' }}>
       <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#64748b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
