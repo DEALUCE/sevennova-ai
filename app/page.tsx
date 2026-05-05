@@ -1,4 +1,5 @@
 'use client'
+// v2 — 2026-05-05
 import { useState } from 'react'
 
 const SKILLS = [
