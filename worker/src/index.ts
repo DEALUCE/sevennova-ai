@@ -12,6 +12,23 @@ app.use('*', async (c, next) => {
   return cors({ origin: origins, allowMethods: ['GET', 'POST', 'OPTIONS'] })(c, next)
 })
 
+// ── ROOT ────────────────────────────────────────────────────────────────────
+
+app.get('/', (c) =>
+  c.json({
+    service: 'sevennova-orchestrator',
+    version: '1.0.0',
+    runtime: 'cloudflare-workers',
+    endpoints: {
+      health:   'GET  /health',
+      report:   'POST /api/v1/report',
+      html:     'POST /api/v1/report/html',
+      checkout: 'POST /api/v1/checkout/session',
+      webhook:  'POST /api/v1/webhook/stripe',
+    },
+  }),
+)
+
 // ── HEALTH ─────────────────────────────────────────────────────────────────
 
 app.get('/health', (c) =>
@@ -41,8 +58,12 @@ app.post('/api/v1/report/html', async (c) => {
   const street = String(body.street ?? '')
   if (!street) return c.html(renderErrorHTML('', 'Missing required field: street'), 400)
 
-  const apiKey = c.env.ANTHROPIC_API_KEY
-  if (!apiKey) return c.html(renderErrorHTML(street, 'ANTHROPIC_API_KEY not configured'), 503)
+  if (!c.env.ANTHROPIC_API_KEY && c.env.DEV_MODE !== 'true') {
+    return c.html(renderErrorHTML(street, 'ANTHROPIC_API_KEY not configured'), 503)
+  }
+  if (c.env.DEV_MODE === 'true' && !c.env.OLLAMA_URL) {
+    return c.html(renderErrorHTML(street, 'DEV_MODE=true but OLLAMA_URL not configured'), 503)
+  }
 
   try {
     const report = await generateReport(
@@ -53,7 +74,7 @@ app.post('/api/v1/report/html', async (c) => {
       body.apn ? String(body.apn) : undefined,
       String(body.tier ?? 'full'),
       body.requester_email ? String(body.requester_email) : undefined,
-      apiKey,
+      c.env,
     )
     return c.html(renderReportHTML(report))
   } catch (e) {
@@ -74,8 +95,12 @@ app.post('/api/v1/report', async (c) => {
   const street = String(body.street ?? '')
   if (!street) return c.json({ error: 'Missing required field: street' }, 400)
 
-  const apiKey = c.env.ANTHROPIC_API_KEY
-  if (!apiKey) return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 503)
+  if (!c.env.ANTHROPIC_API_KEY && c.env.DEV_MODE !== 'true') {
+    return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 503)
+  }
+  if (c.env.DEV_MODE === 'true' && !c.env.OLLAMA_URL) {
+    return c.json({ error: 'DEV_MODE=true but OLLAMA_URL not configured' }, 503)
+  }
 
   try {
     const report = await generateReport(
@@ -86,7 +111,7 @@ app.post('/api/v1/report', async (c) => {
       body.apn ? String(body.apn) : undefined,
       String(body.tier ?? 'full'),
       body.requester_email ? String(body.requester_email) : undefined,
-      apiKey,
+      c.env,
     )
     return c.json({
       request_id: report.request_id,
@@ -165,13 +190,12 @@ app.post('/api/v1/webhook/stripe', async (c) => {
   // Fire-and-forget report generation on successful payment
   if (
     (eventType === 'checkout.session.completed' || eventType === 'payment_intent.succeeded') &&
-    c.env.ANTHROPIC_API_KEY
+    (c.env.ANTHROPIC_API_KEY || c.env.DEV_MODE === 'true')
   ) {
     const obj = (event.data as Record<string, unknown>)?.object as Record<string, unknown> | undefined
     const metadata = (obj?.metadata ?? {}) as Record<string, string>
     const street = metadata.address_street
     if (street) {
-      // Use waitUntil for background task if available
       const ctx = c.executionCtx
       ctx.waitUntil(
         generateReport(
@@ -182,7 +206,7 @@ app.post('/api/v1/webhook/stripe', async (c) => {
           metadata.address_apn || undefined,
           metadata.tier ?? 'full',
           metadata.email || undefined,
-          c.env.ANTHROPIC_API_KEY,
+          c.env,
         ).catch(() => { /* log error silently */ }),
       )
     }
