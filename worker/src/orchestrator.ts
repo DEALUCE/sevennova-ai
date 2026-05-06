@@ -207,7 +207,7 @@ async function callLLM(
   systemPrompt: string,
   userMessage: string,
   env: Env,
-  _model = 'claude-3-5-haiku-20241022',
+  _model = 'claude-haiku-4-5',
 ): Promise<string> {
   if (env.DEV_MODE === 'true' && env.OLLAMA_URL) {
     return callOllama(systemPrompt, userMessage, env.OLLAMA_URL)
@@ -219,7 +219,7 @@ async function callAnthropic(
   systemPrompt: string,
   userMessage: string,
   apiKey: string,
-  model = 'claude-3-5-haiku-20241022',
+  model = 'claude-haiku-4-5',
 ): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
