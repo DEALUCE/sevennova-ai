@@ -1,4 +1,5 @@
 import { SKILL_PROMPTS, NARRATIVE_PROMPT } from './skill-prompts'
+import { fetchZoning, type ZimasResult } from './zimas'
 
 export interface Env {
   ANTHROPIC_API_KEY: string
@@ -342,15 +343,37 @@ export async function generateReport(
   const dcZips = new Set(['90245', '90017', '90028', '91731'])
   const isDCZone = zipCode ? dcZips.has(zipCode) : false
 
+  // Fetch real zoning from ZIMAS (LA City, free, no auth)
+  let zimas: ZimasResult | null = null
+  try {
+    zimas = await fetchZoning(street, city, state, zipCode)
+  } catch {
+    // Non-fatal — skills fall back to AI estimation if ZIMAS unavailable
+  }
+
+  // Override commercial detection if ZIMAS confirms a C/M zone
+  const zimasZoneClass = zimas?.zone_class ?? ''
+  const isCommercialFromZimas = /^(C|M|CM|CR)/.test(zimasZoneClass)
+
   const parcelData = {
     full_address: fullAddress,
     street, city, state,
     zip_code: zipCode ?? null,
     apn: apn ?? null,
-    is_commercial: isCommercial,
+    is_commercial: isCommercial || isCommercialFromZimas,
     is_data_center_zone: isDCZone,
-    freshness: 'UNVERIFIED',
-    confidence: 70,
+    // ZIMAS real data — present when available, null when not
+    zimas_zone_code: zimas?.zone_code ?? null,
+    zimas_zone_class: zimas?.zone_class ?? null,
+    zimas_zone_description: zimas?.zone_description ?? null,
+    zimas_max_far: zimas?.max_far ?? null,
+    zimas_height_limit_ft: zimas?.height_limit_ft ?? null,
+    zimas_height_limit_stories: zimas?.height_limit_stories ?? null,
+    zimas_lat: zimas?.lat ?? null,
+    zimas_lon: zimas?.lon ?? null,
+    zimas_source: zimas?.error ? `ZIMAS_ERROR: ${zimas.error}` : (zimas ? 'LA_CITY_ZIMAS_LIVE' : 'UNAVAILABLE'),
+    freshness: zimas && !zimas.error ? 'LA_CITY_LIVE' : 'UNVERIFIED',
+    confidence: zimas && !zimas.error ? 90 : 70,
   }
 
   // Skill routing

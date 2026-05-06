@@ -1,25 +1,35 @@
 export const SKILL_PROMPTS: Record<string, string> = {
   'la-developer-intelligence': `
 You are the la-developer-intelligence skill for SevenNova.ai.
-Analyze the property and return ONLY valid JSON with these exact keys:
+
+The property data you receive may include REAL zoning fields from LA City ZIMAS (live government data):
+- zimas_zone_code: the official zone designation (e.g. "C2-1", "R3-1VL")
+- zimas_zone_class: the zone class prefix (e.g. "C2", "R3")
+- zimas_max_far: FAR derived from LAMC lookup table
+- zimas_height_limit_ft: height limit in feet
+- zimas_source: "LA_CITY_ZIMAS_LIVE" means data is real; "UNVERIFIED" means estimated
+
+When zimas_source is "LA_CITY_ZIMAS_LIVE", use those values directly with confidence 92 and freshness "LA_CITY_LIVE".
+When zimas data is absent or has errors, estimate from your knowledge of LA zoning with confidence 55 and freshness "UNVERIFIED".
+
+Return ONLY valid JSON with these exact keys:
 {
-  "zoning_code": {"value": "string", "confidence": 70, "freshness": "UNVERIFIED"},
-  "permitted_uses": {"value": "string", "confidence": 70, "freshness": "UNVERIFIED"},
-  "max_far": {"value": 1.5, "confidence": 70, "freshness": "UNVERIFIED"},
-  "height_limit_ft": {"value": 45, "confidence": 70, "freshness": "UNVERIFIED"},
-  "toc_tier": {"value": "Tier 3", "confidence": 70, "freshness": "UNVERIFIED"},
-  "ed1_eligible": {"value": true, "confidence": 70, "freshness": "UNVERIFIED"},
-  "ab2011_eligible": {"value": false, "confidence": 70, "freshness": "UNVERIFIED"},
-  "rso_covered": {"value": false, "confidence": 70, "freshness": "UNVERIFIED"},
-  "ladbs_violations": {"value": "No active violations", "confidence": 70, "freshness": "UNVERIFIED"},
-  "buildable_sf": {"value": 12000, "confidence": 70, "freshness": "UNVERIFIED"},
-  "max_units_by_right": {"value": 4, "confidence": 70, "freshness": "UNVERIFIED"},
-  "max_units_toc": {"value": 12, "confidence": 70, "freshness": "UNVERIFIED"},
-  "confidence_overall": 70,
-  "assumptions": ["LA County only", "Standard R3 zoning assumed"],
-  "unverified_items": ["APN not verified", "Actual lot size unknown"]
+  "zoning_code": {"value": "C2-1", "confidence": 92, "freshness": "LA_CITY_LIVE"},
+  "permitted_uses": {"value": "Commercial retail, office, residential above ground floor", "confidence": 80, "freshness": "UNVERIFIED"},
+  "max_far": {"value": 1.5, "confidence": 92, "freshness": "LA_CITY_LIVE"},
+  "height_limit_ft": {"value": 45, "confidence": 92, "freshness": "LA_CITY_LIVE"},
+  "toc_tier": {"value": "Tier 2 (estimated)", "confidence": 55, "freshness": "UNVERIFIED"},
+  "ed1_eligible": {"value": false, "confidence": 60, "freshness": "UNVERIFIED"},
+  "ab2011_eligible": {"value": false, "confidence": 60, "freshness": "UNVERIFIED"},
+  "rso_covered": {"value": false, "confidence": 60, "freshness": "UNVERIFIED"},
+  "ladbs_violations": {"value": "Not accessible via public API", "confidence": 50, "freshness": "UNVERIFIED"},
+  "buildable_sf": {"value": 12000, "confidence": 55, "freshness": "UNVERIFIED"},
+  "max_units_by_right": {"value": 4, "confidence": 55, "freshness": "UNVERIFIED"},
+  "max_units_toc": {"value": 12, "confidence": 55, "freshness": "UNVERIFIED"},
+  "confidence_overall": 75,
+  "assumptions": ["Lot size estimated at 6,000 sf — verify via APN", "TOC tier estimated from transit proximity"],
+  "unverified_items": ["APN not verified", "Actual lot size unknown", "TOC tier requires ZIMAS auth"]
 }
-Label ALL values as UNVERIFIED. Never hallucinate — use null if truly unknown.
 Return ONLY the JSON object, no other text.
 `,
 
