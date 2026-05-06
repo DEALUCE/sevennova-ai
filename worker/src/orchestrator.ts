@@ -8,6 +8,8 @@ export interface Env {
   STRIPE_PRICE_FULL: string
   STRIPE_PRICE_INSTITUTIONAL: string
   CORS_ORIGINS: string
+  DEV_MODE?: string
+  OLLAMA_URL?: string
 }
 
 export interface DataPoint {
@@ -160,6 +162,59 @@ const SKILL_RESULT_MAP: Record<string, string> = {
   'entitlement-velocity-engine': 'entitlement',
 }
 
+const DEV_MODEL = 'qwen2.5-coder:32b'
+
+// Run tasks in batches of batchSize to avoid GPU memory overflow
+async function batchedAll<T>(
+  tasks: Array<() => Promise<T>>,
+  batchSize: number,
+): Promise<T[]> {
+  const results: T[] = []
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize).map(fn => fn())
+    results.push(...await Promise.all(batch))
+  }
+  return results
+}
+
+async function callOllama(
+  systemPrompt: string,
+  userMessage: string,
+  ollamaUrl: string,
+): Promise<string> {
+  const res = await fetch(`${ollamaUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: DEV_MODEL,
+      // Force JSON output at inference level — overrides any markdown tendency
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Ollama ${res.status}: ${err.slice(0, 200)}`)
+  }
+  const data = await res.json() as { choices: Array<{ message: { content: string } }> }
+  return data.choices[0].message.content
+}
+
+async function callLLM(
+  systemPrompt: string,
+  userMessage: string,
+  env: Env,
+  _model = 'claude-3-5-haiku-20241022',
+): Promise<string> {
+  if (env.DEV_MODE === 'true' && env.OLLAMA_URL) {
+    return callOllama(systemPrompt, userMessage, env.OLLAMA_URL)
+  }
+  return callAnthropic(systemPrompt, userMessage, env.ANTHROPIC_API_KEY, _model)
+}
+
 async function callAnthropic(
   systemPrompt: string,
   userMessage: string,
@@ -188,22 +243,37 @@ async function callAnthropic(
   return data.content[0].text
 }
 
-function parseJSON(raw: string): Record<string, unknown> {
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    // Try to extract a JSON object from the response
-    const match = cleaned.match(/\{[\s\S]*\}/)
-    if (match) return JSON.parse(match[0])
-    throw new Error('Could not parse JSON from Anthropic response')
+function parseJSON(raw: string, skillName = 'unknown'): Record<string, unknown> {
+  // Strip markdown fences
+  const cleaned = raw.replace(/^```(?:json)?\s*/im, '').replace(/\s*```\s*$/m, '').trim()
+
+  // Attempt 1: direct parse
+  try { return JSON.parse(cleaned) } catch { /* fall through */ }
+
+  // Attempt 2: extract first {...} block (model may add prose before/after)
+  const objMatch = cleaned.match(/\{[\s\S]*\}/)
+  if (objMatch) {
+    try { return JSON.parse(objMatch[0]) } catch { /* fall through */ }
+    // Attempt 3: truncated JSON — find last complete key-value by trimming trailing garbage
+    try {
+      const truncated = objMatch[0].replace(/,?\s*[^,}\]]*$/, '') + '}'
+      return JSON.parse(truncated)
+    } catch { /* fall through */ }
   }
+
+  // Attempt 4: extract first [...] array wrapped as object
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/)
+  if (arrMatch) {
+    try { return { items: JSON.parse(arrMatch[0]) } } catch { /* fall through */ }
+  }
+
+  throw new Error(`${skillName}: could not parse JSON from model output (${cleaned.slice(0, 120)}...)`)
 }
 
 async function runSkill(
   skillName: string,
   parcelData: Record<string, unknown>,
-  apiKey: string,
+  env: Env,
 ): Promise<{ name: string; data: Record<string, unknown> | null; log: SkillLog }> {
   const start = Date.now()
   const prompt = SKILL_PROMPTS[skillName] ?? `
@@ -212,12 +282,12 @@ Analyze the property data and return a JSON object with your analysis.
 Label uncertain data as UNVERIFIED. Include confidence scores (0-100). Never hallucinate — use null if unknown.
 `
   try {
-    const raw = await callAnthropic(
+    const raw = await callLLM(
       prompt,
       `Analyze this property:\n${JSON.stringify(parcelData, null, 2)}`,
-      apiKey,
+      env,
     )
-    const data = parseJSON(raw)
+    const data = parseJSON(raw, skillName)
     const duration_ms = Date.now() - start
     return {
       name: skillName,
@@ -254,7 +324,7 @@ export async function generateReport(
   apn: string | undefined,
   tier: string,
   requesterEmail: string | undefined,
-  apiKey: string,
+  env: Env,
 ): Promise<PropertyReport> {
   const start = Date.now()
   const requestId = crypto.randomUUID().replace(/-/g, '')
@@ -293,9 +363,11 @@ export async function generateReport(
     skills.push('data-center-intelligence')
   }
 
-  // Run all skills in parallel
-  const skillResults = await Promise.all(
-    skills.map(name => runSkill(name, parcelData, apiKey))
+  // Run skills in batches of 4 — parallel within each batch, sequential across batches
+  // Keeps GPU memory pressure manageable for large local models
+  const skillResults = await batchedAll(
+    skills.map(name => () => runSkill(name, parcelData, env)),
+    4,
   )
 
   const skillResultMap: Record<string, Record<string, unknown>> = {}
@@ -332,14 +404,35 @@ export async function generateReport(
     overall_confidence: 60,
   }
 
+  // Condense skill results for narrative — extract only leaf values (no nested DataPoint wrappers)
+  // Keeps narrative input under ~3k tokens so smaller local models stay on-task
+  const condensed: Record<string, Record<string, unknown>> = {}
+  for (const [skill, data] of Object.entries(skillResultMap)) {
+    const flat: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== null && typeof v === 'object' && 'value' in (v as object)) {
+        flat[k] = (v as Record<string, unknown>).value
+      } else if (!Array.isArray(v)) {
+        flat[k] = v
+      }
+    }
+    condensed[skill] = flat
+  }
+
   try {
-    const raw = await callAnthropic(
+    const raw = await callLLM(
       NARRATIVE_PROMPT,
-      `Property: ${fullAddress}\nTier: ${normalizedTier}\nSkill Results: ${JSON.stringify(skillResultMap, null, 2)}\nAssumptions: ${JSON.stringify([...new Set(assumptions)])}\nUnverified: ${JSON.stringify([...new Set(unverified)])}`,
-      apiKey,
+      `Property: ${fullAddress}\nTier: ${normalizedTier}\nSkill Results:\n${JSON.stringify(condensed, null, 2)}\nAssumptions: ${[...new Set(assumptions)].join('; ')}\nUnverified: ${[...new Set(unverified)].join('; ')}`,
+      env,
       'claude-opus-4-5',
     )
-    narrative = parseJSON(raw)
+    const parsed = parseJSON(raw, 'narrative')
+    // Only accept if key fields are non-empty strings
+    if (parsed.executive_summary && String(parsed.executive_summary).length > 20) {
+      narrative = parsed
+    } else {
+      narrative.red_flags = ['Narrative returned empty fields — skill data used directly']
+    }
   } catch (e) {
     narrative.red_flags = [`Narrative generation failed: ${String(e)}`]
   }
