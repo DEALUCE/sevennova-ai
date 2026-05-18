@@ -12,6 +12,27 @@ app.use('*', async (c, next) => {
   return cors({ origin: origins, allowMethods: ['GET', 'POST', 'OPTIONS'] })(c, next)
 })
 
+// ── AUTH ─────────────────────────────────────────────────────────────────────
+// Validate X-API-Key against KV namespace SEVENNOVA_KEYS.
+// Stripe webhook is exempt — it carries its own HMAC signature.
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname
+  if (path === '/api/v1/webhook/stripe') return next()
+
+  const key = c.req.header('X-API-Key') ?? ''
+  if (!key) return c.json({ error: 'unauthorized' }, 401)
+
+  // KV lookup — value can be anything truthy (e.g. customer email, tier, "1")
+  const valid = c.env.SEVENNOVA_KEYS
+    ? await c.env.SEVENNOVA_KEYS.get(key)
+    : null
+
+  if (!valid) return c.json({ error: 'unauthorized' }, 401)
+
+  return next()
+})
+
 // ── ROOT ────────────────────────────────────────────────────────────────────
 
 app.get('/', (c) =>

@@ -6,6 +6,10 @@ routes = [
   { pattern = "api.sevennova.ai", custom_domain = true }
 ]
 
+[[kv_namespaces]]
+binding = "SEVENNOVA_KEYS"
+id = "7a4fa7318fea421baf31c803ac4ab30b"
+
 [vars]
 CORS_ORIGINS = "https://sevennova.ai,http://localhost:3000"
 DEV_MODE = "false"

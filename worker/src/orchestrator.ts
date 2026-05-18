@@ -11,6 +11,7 @@ export interface Env {
   CORS_ORIGINS: string
   DEV_MODE?: string
   OLLAMA_URL?: string
+  SEVENNOVA_KEYS: KVNamespace
 }
 
 export interface DataPoint {
