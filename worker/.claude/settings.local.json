@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(node *)",
+      "Bash(npx wrangler *)",
+      "Bash(python agent_24_v2.py NVDA --account 100000)"
+    ]
+  }
+}

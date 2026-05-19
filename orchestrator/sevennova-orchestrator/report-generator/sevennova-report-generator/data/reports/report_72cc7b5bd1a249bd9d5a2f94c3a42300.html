@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SevenNova.ai — 3612 W Jefferson Blvd, Los Angeles, CA 90016</title>
+<style>
+:root {
+  --bg: #04080f;
+  --surface: #080e1a;
+  --card: #0c1422;
+  --border: #162035;
+  --border2: #1e2d4a;
+  --accent: #00d4ff;
+  --green: #00e5a0;
+  --red: #ff4757;
+  --gold: #f0b429;
+  --text: #e8f0fe;
+  --muted: #5a7090;
+  --mono: 'Courier New', monospace;
+  --sans: 'Arial', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+/* HEADER */
+.header { background: linear-gradient(135deg, #0a1628, #0f1e3a); border-bottom: 1px solid var(--border); padding: 40px 0 32px; }
+.logo { font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 20px; }
+.address-title { font-size: 28px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+.address-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 20px; }
+.meta-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }
+.meta-item { display: flex; flex-direction: column; gap: 2px; }
+.meta-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; font-family: var(--mono); }
+.meta-value { font-size: 14px; color: var(--text); font-weight: 600; }
+.deal-score-badge { width: 80px; height: 80px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-left: auto;
+  background: linear-gradient(135deg,#f0b429,#cc8800);
+  box-shadow: 0 0 30px rgba(0,0,0,0.4); flex-shrink: 0; }
+.deal-score-letter { font-family: var(--mono); font-size: 32px; font-weight: 700; color: #fff; line-height: 1; }
+.deal-score-label { font-size: 8px; color: rgba(255,255,255,0.7); letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
+
+/* ALERTS */
+.alert { border-left: 4px solid var(--red); background: rgba(255,71,87,0.06); border-radius: 6px; padding: 12px 16px; margin: 16px 0; font-size: 13px; color: #ff9aa5; }
+.alert strong { color: var(--red); }
+.warn { border-left: 4px solid var(--gold); background: rgba(240,180,41,0.06); border-radius: 6px; padding: 12px 16px; margin: 16px 0; font-size: 13px; color: #fde68a; }
+
+/* SECTIONS */
+.section { padding: 28px 0; border-bottom: 1px solid var(--border); }
+.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.section-num { font-family: var(--mono); font-size: 9px; color: var(--accent); background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); padding: 3px 8px; border-radius: 3px; letter-spacing: 1px; }
+.section-title { font-size: 17px; font-weight: 700; color: #fff; }
+
+/* CARDS */
+.cards-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+.cards-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
+.cards-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.card-red { border-left: 3px solid var(--red); }
+.card-green { border-left: 3px solid var(--green); }
+.card-accent { border-left: 3px solid var(--accent); }
+.card-gold { border-left: 3px solid var(--gold); }
+.card-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; font-family: var(--mono); margin-bottom: 6px; }
+.card-value { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 2px; font-family: var(--mono); }
+.card-sub { font-size: 11px; color: var(--muted); }
+
+/* TABLES */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { background: rgba(0,212,255,0.05); padding: 9px 12px; text-align: left; font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 400; }
+.data-table td { padding: 9px 12px; border-bottom: 1px solid rgba(22,32,53,0.5); color: var(--text); }
+.data-table tr:nth-child(even) td { background: rgba(12,20,34,0.4); }
+.mono { font-family: var(--mono); font-size: 11px; }
+
+/* BADGES */
+.badge { display: inline-block; font-family: var(--mono); font-size: 8px; letter-spacing: 1px; padding: 2px 7px; border-radius: 3px; text-transform: uppercase; }
+.badge-green { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.25); color: #6ee7b7; }
+.badge-red { background: rgba(255,71,87,0.1); border: 1px solid rgba(255,71,87,0.25); color: #fca5a5; }
+.badge-yellow { background: rgba(240,180,41,0.1); border: 1px solid rgba(240,180,41,0.25); color: #fde68a; }
+.badge-blue { background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.2); color: #7dd3fc; }
+.badge-unverified { background: rgba(90,112,144,0.1); border: 1px solid rgba(90,112,144,0.2); color: var(--muted); }
+
+/* PRO FORMA */
+.proforma { background: var(--card); border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; }
+.proforma-header { background: rgba(0,212,255,0.05); padding: 10px 14px; font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); border-bottom: 1px solid var(--border); }
+.proforma-row { display: flex; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid rgba(22,32,53,0.3); font-size: 12px; }
+.proforma-row:last-child { border-bottom: none; }
+.proforma-key { color: #94a3b8; }
+.proforma-val { font-family: var(--mono); font-size: 11px; }
+.proforma-total { background: rgba(0,212,255,0.04); border-top: 1px solid var(--border); font-weight: 600; }
+.proforma-total .proforma-key { color: var(--text); }
+.proforma-total .proforma-val { color: var(--accent); }
+.text-red { color: var(--red); }
+.text-green { color: var(--green); }
+.text-gold { color: var(--gold); }
+
+/* SKILLS */
+.skill-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.skill-tag { font-family: var(--mono); font-size: 8px; padding: 3px 8px; border-radius: 3px; letter-spacing: 1px; text-transform: uppercase; }
+.skill-active { background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25); color: #a5b4fc; }
+
+/* STRATEGY */
+.strategy-list { display: flex; flex-direction: column; gap: 10px; }
+.strategy-item { display: flex; gap: 14px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.strategy-rank { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--accent); flex-shrink: 0; line-height: 1; }
+.strategy-name { font-weight: 600; color: #fff; margin-bottom: 4px; font-size: 14px; }
+.strategy-desc { font-size: 12px; color: var(--muted); }
+
+/* RISK GRID */
+.risk-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; }
+.risk-item { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+.risk-dot { width: 10px; height: 10px; border-radius: 50%; margin: 0 auto 8px; }
+.risk-dot.red { background: var(--red); }
+.risk-dot.yellow { background: var(--gold); }
+.risk-dot.green { background: var(--green); }
+.risk-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+.risk-rating { font-size: 11px; font-weight: 600; font-family: var(--mono); }
+
+/* FOOTER */
+.footer { background: var(--surface); border-top: 1px solid var(--border); padding: 24px 0; margin-top: 32px; }
+.disclaimer { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="container">
+    <div class="logo">SevenNova.ai // Investment Intelligence Report</div>
+    <h1 class="address-title">3612 W Jefferson Blvd, Los Angeles, CA 90016</h1>
+    <div class="address-sub">
+      
+      Report ID: 72cc7b5bd1a249bd9d5a2f94c3a42300 · Generated: May 04, 2026 · Tier: FULL
+    </div>
+    <div class="meta-row">
+      <div class="meta-item">
+        <div class="meta-label">Deal Score</div>
+        <div class="meta-value">C</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Overall Confidence</div>
+        <div class="meta-value">42%</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Data Freshness</div>
+        <div class="meta-value">UNVERIFIED</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Skills Activated</div>
+        <div class="meta-value">7/15</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Generation Time</div>
+        <div class="meta-value">36.8s</div>
+      </div>
+      <div class="deal-score-badge">
+        <div class="deal-score-letter">C</div>
+        <div class="deal-score-label">Score</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- RED FLAGS -->
+
+
+<div class="alert"><strong>⚠ FLAG:</strong> CRITICAL DATA GAP: No APN provided—cannot verify parcel boundaries, lot size, or ownership (0% confidence on parcel data)</div>
+
+<div class="alert"><strong>⚠ FLAG:</strong> LOW CONFIDENCE DISTRESS ANALYSIS: DSCR estimate at 1.15x with only 25% confidence; LADBS order status unverified (20% confidence)</div>
+
+<div class="alert"><strong>⚠ FLAG:</strong> ZONING UNVERIFIED: C2-1VL assumed but requires ZIMAS confirmation—incorrect zoning would invalidate entire development thesis</div>
+
+<div class="alert"><strong>⚠ FLAG:</strong> CLIMATE-ADJUSTED AVM ENGINE RETURNED NULL: Missing climate risk quantification for value adjustment</div>
+
+<div class="alert"><strong>⚠ FLAG:</strong> THIN MARGIN: -2.8% IRR impact from $18,500/month carry costs over 14-month entitlement timeline erodes returns</div>
+
+<div class="alert"><strong>⚠ FLAG:</strong> LOW CONFIDENCE: 42.0% — warn user</div>
+
+
+
+<!-- SKILLS ACTIVATED -->
+<div class="section" style="padding: 16px 0; border-bottom: none;">
+  <div class="skill-bar">
+    
+    <span class="skill-tag skill-active">
+      la-developer-intelligence
+    </span>
+    
+    <span class="skill-tag skill-active">
+      ensemble-pricing-engine
+    </span>
+    
+    <span class="skill-tag skill-active">
+      distressed-debt-radar
+    </span>
+    
+    <span class="skill-tag badge-red">
+      climate-adjusted-avm ✗
+    </span>
+    
+    <span class="skill-tag skill-active">
+      entitlement-velocity-engine
+    </span>
+    
+    <span class="skill-tag skill-active">
+      geospatial-analysis
+    </span>
+    
+    <span class="skill-tag badge-red">
+      pricing-oracle ✗
+    </span>
+    
+    <span class="skill-tag badge-red">
+      tenant-credit-collapse ✗
+    </span>
+    
+    <span class="skill-tag badge-red">
+      tenant-demand-signal ✗
+    </span>
+    
+    <span class="skill-tag skill-active">
+      power-grid-intel
+    </span>
+    
+    <span class="skill-tag skill-active">
+      data-center-intelligence
+    </span>
+    
+  </div>
+</div>
+
+<!-- SECTION 1: EXECUTIVE SUMMARY -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">01</div>
+    <div class="section-title">Executive Summary</div>
+  </div>
+  <p style="font-size: 14px; color: var(--text); line-height: 1.7; margin-bottom: 12px;">3612 W Jefferson Blvd presents a potential mixed-use development opportunity in the gentrifying West Adams corridor with an ensemble-estimated value of $1.895M (71% confidence) [UNVERIFIED]. The property likely qualifies for TOC Tier 3 density bonuses and may be eligible for streamlined AB2011/ED1 entitlement pathways [ASSUMPTION], but critical data gaps—including missing APN, lot size, and verified zoning—severely limit analysis reliability (overall data quality score: 35/100). Moderate distress signals (score: 42/100) suggest potential off-market acquisition opportunity within an 18-month event window, though DSCR estimates of 1.15x indicate thin debt service coverage [UNVERIFIED].</p>
+  
+  <p style="font-size: 13px; color: var(--muted); line-height: 1.7; font-style: italic;">This transit-proximate commercial corridor site offers by-right development potential with 78% approval probability and 14-month timeline [ASSUMPTION: C2-1VL zoning], making it attractive for value-add or ground-up multifamily conversion targeting LA&#39;s housing shortage. The $315K/unit pricing [ASSUMPTION: 6 units] and 5.2% cap rate align with Mid-City market fundamentals, though the -2.8% IRR impact from entitlement carry costs requires aggressive lease-up or pre-sale assumptions.</p>
+  
+</div>
+
+<!-- SECTION 2: ZONING INTELLIGENCE -->
+
+
+<!-- SECTION 3: VALUATION -->
+
+
+<!-- SECTION 4: DISTRESS RADAR -->
+
+
+<!-- SECTION 5: ENTITLEMENT -->
+
+
+<!-- SECTION 6: CLIMATE -->
+
+
+<!-- SECTION 7: STRATEGIC RECOMMENDATIONS -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">07</div>
+    <div class="section-title">Strategic Recommendations</div>
+  </div>
+  <div class="strategy-list">
+    
+    <div class="strategy-item">
+      <div class="strategy-rank">1</div>
+      <div>
+        <div class="strategy-name">Priority Action #1</div>
+        <div class="strategy-desc">IMMEDIATE: Obtain APN via LA County Assessor and verify zoning through ZIMAS before any further analysis or LOI submission</div>
+      </div>
+    </div>
+    
+    <div class="strategy-item">
+      <div class="strategy-rank">2</div>
+      <div>
+        <div class="strategy-name">Priority Action #2</div>
+        <div class="strategy-desc">Confirm TOC tier eligibility and density bonus calculations through LA City Planning TOC map to validate unit count assumptions</div>
+      </div>
+    </div>
+    
+    <div class="strategy-item">
+      <div class="strategy-rank">3</div>
+      <div>
+        <div class="strategy-name">Priority Action #3</div>
+        <div class="strategy-desc">Request LADBS violation check and ownership/entity disclosure to assess hidden liabilities and sponsor distress signals</div>
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+<!-- SECTION 8: RISK SUMMARY -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">08</div>
+    <div class="section-title">Risk Summary</div>
+  </div>
+  <p style="font-size: 13px; color: var(--muted); line-height: 1.7; margin-bottom: 16px;">Critical verification gaps create substantial blind spots: no APN means lot size, buildable SF, and max unit counts cannot be calculated—these are deal-killers if actuals diverge from assumptions. Jurisdiction risk (6/10) reflects LA&#39;s complex approval environment and potential community opposition in gentrifying West Adams [ASSUMPTION], while elevated seismic exposure (70% confidence) and 2024-2026 debt maturity wall exposure add structural risk layers.</p>
+</div>
+
+<!-- SECTION 9: ASSUMPTIONS & UNVERIFIED -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">09</div>
+    <div class="section-title">Assumptions & Unverified Data</div>
+  </div>
+  
+  <div class="warn" style="margin-bottom: 12px;">
+    <strong>Assumptions [ASSUMPTION]:</strong><br>
+    <div style="margin-top:4px;">• Assumed C2-1VL zoning based on W Jefferson Blvd commercial corridor character in West Adams/Mid-City area</div><div style="margin-top:4px;">• LADBS order status requires direct permit system query - defaulted to false with low confidence</div><div style="margin-top:4px;">• By-right pathway assumes compliance with existing zoning without variance requests</div><div style="margin-top:4px;">• Event window based on typical loan maturity cycles for 2019-2021 vintage debt</div><div style="margin-top:4px;">• No APN provided - values based on address and comparable market data only</div><div style="margin-top:4px;">• Jefferson Blvd commercial corridor assumed - likely retail/mixed-use property type</div><div style="margin-top:4px;">• Lot size unknown - cannot calculate buildable SF or max units without APN/parcel data</div><div style="margin-top:4px;">• AB2011 eligibility assumed based on commercial zoning meeting typical criteria</div><div style="margin-top:4px;">• Market conditions as of analysis date; subject to regulatory changes including Housing Element updates</div><div style="margin-top:4px;">• Property located in West Adams/Jefferson Park area of Los Angeles 90016</div><div style="margin-top:4px;">• Property located in West Adams/Jefferson Park area of Los Angeles - assumed C2 or R3 zoning typical for Jefferson Blvd corridor</div><div style="margin-top:4px;">• ED1 eligibility assumed due to commercial zoning on major transit corridor</div><div style="margin-top:4px;">• Ensemble weights: XGBoost 40%, LightGBM 30%, CatBoost 30%</div><div style="margin-top:4px;">• Climate adjustment reflects moderate wildfire and drought risk for LA basin</div><div style="margin-top:4px;">• Carry costs estimated based on typical mid-city LA land holding costs including property taxes, insurance, and financing</div><div style="margin-top:4px;">• No specific APN provided - zoning and lot details assumed based on corridor characteristics</div><div style="margin-top:4px;">• Distress score weighted toward moderate due to submarket fundamentals offsetting refinancing headwinds</div><div style="margin-top:4px;">• 90016 zip suggests West Adams/Jefferson Park submarket with gentrification pressure</div><div style="margin-top:4px;">• Cap rate reflects current LA multifamily market conditions Q1 2025</div><div style="margin-top:4px;">• TOC Tier 3 assumed based on proximity to Metro Expo Line (La Cienega/Jefferson station area)</div><div style="margin-top:4px;">• RSO coverage assumed false as property appears to be commercial; would need verification if residential units exist</div><div style="margin-top:4px;">• Jurisdiction risk rated 6/10 due to LA&#39;s historically lengthy approval processes and potential community opposition in gentrifying neighborhoods</div><div style="margin-top:4px;">• DSCR estimate assumes typical cap rate compression from 2019-2021 acquisitions now facing higher debt service costs</div><div style="margin-top:4px;">• Density bonus calculation based on LA&#39;s Transit Oriented Communities (TOC) guidelines if near transit</div><div style="margin-top:4px;">• Assumed mixed-use or multifamily property based on Jefferson Blvd commercial corridor</div><div style="margin-top:4px;">• IRR impact reflects moderate entitlement risk in LA&#39;s complex approval environment</div><div style="margin-top:4px;">• No APN provided - unable to verify exact parcel or pull recorder/assessor data</div><div style="margin-top:4px;">• No ownership/entity information provided to assess sponsor-level distress</div><div style="margin-top:4px;">• LA City planning jurisdiction with standard entitlement processes</div><div style="margin-top:4px;">• Estimated 6 units for price per unit calculation</div><div style="margin-top:4px;">• Timeline assumes no CEQA categorical exemption issues and streamlined review</div><div style="margin-top:4px;">• Values assume standard condition without interior inspection data</div>
+  </div>
+  
+  
+  <div class="alert">
+    <strong>Unverified [UNVERIFIED] — verify before relying:</strong><br>
+    <div style="margin-top:4px;">• APN not provided - cannot verify exact parcel boundaries or lot size</div><div style="margin-top:4px;">• Zoning code requires verification via ZIMAS</div><div style="margin-top:4px;">• Height district designation requires ZIMAS verification</div><div style="margin-top:4px;">• Any overlay zones or specific plan areas not verified</div><div style="margin-top:4px;">• Current use and existing structures unknown</div><div style="margin-top:4px;">• TOC tier requires verification via LA City Planning TOC map</div><div style="margin-top:4px;">• ED1/AB2011 eligibility requires verification of specific parcel criteria</div><div style="margin-top:4px;">• LADBS violations require direct database query</div>
+  </div>
+  
+</div>
+
+
+<!-- SKILL LOG -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">10</div>
+    <div class="section-title">Skill Activation Log</div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Skill</th><th>Status</th><th>Confidence</th><th>Freshness</th><th>Duration</th></tr></thead>
+    <tbody>
+      
+      <tr>
+        <td class="mono">la-developer-intelligence</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">11513ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">ensemble-pricing-engine</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">1%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">7674ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">distressed-debt-radar</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">9444ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">climate-adjusted-avm</td>
+        <td><span class="badge badge-red">Failed</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">16516ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">entitlement-velocity-engine</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">1%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">9368ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">geospatial-analysis</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">70%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">12834ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">pricing-oracle</td>
+        <td><span class="badge badge-red">Failed</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">17004ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">tenant-credit-collapse</td>
+        <td><span class="badge badge-red">Failed</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">16201ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">tenant-demand-signal</td>
+        <td><span class="badge badge-red">Failed</span></td>
+        <td class="mono">0%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">13777ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">power-grid-intel</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">70%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">16460ms</td>
+      </tr>
+      
+      <tr>
+        <td class="mono">data-center-intelligence</td>
+        <td><span class="badge badge-green">Active</span></td>
+        <td class="mono">70%</td>
+        <td><span class="badge badge-unverified">UNVERIFIED</span></td>
+        <td class="mono">17598ms</td>
+      </tr>
+      
+    </tbody>
+  </table>
+</div>
+
+</div><!-- end container -->
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="disclaimer">
+    <strong>DISCLAIMER</strong><br>
+    For informational purposes only. Not a licensed appraisal. Not legal advice. Consult a licensed professional before making any real estate or financial decision. © 2026 SevenNova.ai<br><br>
+    <span style="opacity:0.6;">Report ID: 72cc7b5bd1a249bd9d5a2f94c3a42300 · Generated: 2026-05-04T23:24:39.944520 · Skills: 7/15 · Confidence: 42% · Data: UNVERIFIED</span>
+  </div>
+</div>
+
+</body>
+</html>

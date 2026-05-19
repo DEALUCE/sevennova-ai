@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -15,13 +15,42 @@ const S = {
   border: 'rgba(0,212,255,0.12)',
   borderDim: 'rgba(255,255,255,0.06)',
   green: '#00ff88',
+  amber: '#f59e0b',
   font: "'Space Mono', monospace",
 };
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://api.sevennova.ai';
 
 function SuccessInner() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('session_id');
   const requestId = searchParams.get('request_id');
+
+  // Phase 2: Fetch API key from worker using session ID, not from URL param
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [tier, setTier] = useState<string | null>(null);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
+    fetch(`${API_BASE}/api/v1/checkout/session/${sessionId}`)
+      .then(r => r.json())
+      .then((data: Record<string, string>) => {
+        if (data.api_key) {
+          setApiKey(data.api_key);
+          setTier(data.tier ?? null);
+          localStorage.setItem('sevennova_api_key', data.api_key);
+        } else {
+          setKeyError(data.error ?? 'Key not found');
+        }
+      })
+      .catch(() => setKeyError('Could not retrieve API key — contact support'))
+      .finally(() => setLoading(false));
+  }, [sessionId]);
 
   return (
     <div style={{ background: S.bg, minHeight: '100vh', fontFamily: S.font, color: S.text }}>
@@ -56,9 +85,9 @@ function SuccessInner() {
         </h1>
 
         <p style={{ color: S.textDim, fontSize: '0.88rem', lineHeight: 1.8, marginBottom: 40 }}>
-          All 15 AI skills are now running on your property.
+          All AI skills are now running on your property.
           You&apos;ll receive your full report by email within 60 seconds.
-          A copy will also be available for download below once ready.
+          Use your API key below to download the PDF or run additional queries.
         </p>
 
         {/* Session info */}
@@ -66,7 +95,7 @@ function SuccessInner() {
           {sessionId && (
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${S.borderDim}`, fontSize: '0.72rem' }}>
               <span style={{ color: S.textMuted }}>Session ID</span>
-              <span style={{ color: S.textDim, fontSize: '0.65rem', fontFamily: 'monospace' }}>{sessionId.slice(0, 30)}...</span>
+              <span style={{ color: S.textDim, fontSize: '0.65rem', fontFamily: 'monospace' }}>{sessionId.slice(0, 30)}…</span>
             </div>
           )}
           {requestId && (
@@ -75,50 +104,53 @@ function SuccessInner() {
               <span style={{ color: S.accent, fontSize: '0.72rem' }}>{requestId}</span>
             </div>
           )}
+          {tier && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${S.borderDim}`, fontSize: '0.72rem' }}>
+              <span style={{ color: S.textMuted }}>Plan Tier</span>
+              <span style={{ color: S.text, fontSize: '0.72rem', textTransform: 'uppercase' }}>{tier}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${S.borderDim}`, fontSize: '0.72rem' }}>
+            <span style={{ color: S.textMuted }}>API Key</span>
+            {loading ? (
+              <span style={{ color: S.textMuted, fontSize: '0.65rem' }}>Retrieving…</span>
+            ) : apiKey ? (
+              <span style={{ color: S.green, fontSize: '0.65rem', fontFamily: 'monospace' }}>{apiKey.slice(0, 24)}…</span>
+            ) : (
+              <span style={{ color: S.amber, fontSize: '0.65rem' }}>{keyError ?? 'Not found'}</span>
+            )}
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: '0.72rem' }}>
             <span style={{ color: S.textMuted }}>Expected delivery</span>
             <span style={{ color: S.green }}>&lt;60 seconds</span>
           </div>
         </div>
 
+        {keyError && (
+          <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', padding: '12px 16px', marginBottom: 24, textAlign: 'left', fontSize: '0.78rem', color: S.amber }}>
+            API Key retrieval failed: {keyError}. Your payment was successful — email dan.issak@gmail.com with your session ID to receive your key manually.
+          </div>
+        )}
+
         {/* Actions */}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          {requestId && (
+          {requestId && apiKey && (
             <Link
               href={`/analyze?request_id=${requestId}`}
-              style={{
-                padding: '12px 24px',
-                background: S.accent, color: S.bg,
-                fontSize: '0.78rem', fontWeight: 700,
-                letterSpacing: '0.08em', textDecoration: 'none',
-              }}
+              style={{ padding: '12px 24px', background: S.accent, color: S.bg, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em', textDecoration: 'none' }}
             >
               VIEW REPORT →
             </Link>
           )}
           <Link
             href="/analyze"
-            style={{
-              padding: '12px 24px',
-              background: 'transparent',
-              border: `1px solid ${S.borderDim}`,
-              color: S.textDim,
-              fontSize: '0.78rem', letterSpacing: '0.06em',
-              textDecoration: 'none',
-            }}
+            style={{ padding: '12px 24px', background: 'transparent', border: `1px solid ${S.borderDim}`, color: S.textDim, fontSize: '0.78rem', letterSpacing: '0.06em', textDecoration: 'none' }}
           >
             ANALYZE ANOTHER
           </Link>
           <Link
             href="/"
-            style={{
-              padding: '12px 24px',
-              background: 'transparent',
-              border: `1px solid ${S.borderDim}`,
-              color: S.textDim,
-              fontSize: '0.78rem', letterSpacing: '0.06em',
-              textDecoration: 'none',
-            }}
+            style={{ padding: '12px 24px', background: 'transparent', border: `1px solid ${S.borderDim}`, color: S.textDim, fontSize: '0.78rem', letterSpacing: '0.06em', textDecoration: 'none' }}
           >
             HOME
           </Link>
@@ -134,7 +166,6 @@ function SuccessInner() {
         </p>
       </div>
 
-      {/* Footer */}
       <footer style={{ borderTop: `1px solid ${S.borderDim}`, padding: '28px 24px', textAlign: 'center' }}>
         <p style={{ color: S.textMuted, fontSize: '0.7rem' }}>
           © 2026 SevenNova.ai — All rights reserved.

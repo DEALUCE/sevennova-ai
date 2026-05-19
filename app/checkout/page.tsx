@@ -82,10 +82,10 @@ function CheckoutInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tier,
-          address: address || undefined,
-          zip_code: zip || undefined,
-          requester_email: email || undefined,
-          success_url: `${window.location.origin}/success?session_id={CHECKOUT_SESSION_ID}`,
+          address_street: address || undefined,
+          address_zip: zip || undefined,
+          customer_email: email || undefined,
+          success_url: `${window.location.origin}/success?session_id={CHECKOUT_SESSION_ID}&api_key={CHECKOUT_SESSION_ID}`,
           cancel_url: `${window.location.origin}/pricing`,
         }),
       });
@@ -96,8 +96,8 @@ function CheckoutInner() {
       }
 
       const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
       } else {
         throw new Error('No checkout URL returned from server');
       }
