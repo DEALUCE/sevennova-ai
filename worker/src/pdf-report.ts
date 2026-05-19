@@ -178,13 +178,13 @@ class Writer {
 
   flagRow(flag: string) {
     this.ensure(16)
-    this.page.drawText('▸', { x: MARGIN, y: this.y, size: 9, font: this.bold, color: C_RED })
+    this.page.drawText('!', { x: MARGIN, y: this.y, size: 9, font: this.bold, color: C_RED })
     this.text(flag, { indent: 14, size: 9, color: C_DARK, maxW: CONTENT_W - 14 })
   }
 
   bullet(str: string, indent = 10) {
     this.ensure(16)
-    this.page.drawText('•', { x: MARGIN + indent - 10, y: this.y, size: 9, font: this.reg, color: C_CYAN })
+    this.page.drawText('-', { x: MARGIN + indent - 10, y: this.y, size: 9, font: this.reg, color: C_CYAN })
     this.text(str, { indent, size: 9, color: C_DARK, maxW: CONTENT_W - indent })
   }
 }
@@ -420,7 +420,7 @@ export async function generatePDFReport(report: PropertyReport, userKey?: string
   w.gap(10)
   w.subheading('Skills Executed')
   for (const skill of report.skills_activated ?? []) {
-    const icon = skill.activated ? '✓' : '✗'
+    const icon = skill.activated ? '+' : 'x'
     const col  = skill.activated ? C_GREEN : C_RED
     w.ensure(14)
     w.page.drawText(icon, { x: MARGIN, y: w.y, size: 9, font: bold, color: col })
