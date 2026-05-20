@@ -11,6 +11,7 @@
  */
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from 'pdf-lib'
 import type { PropertyReport, DataPoint } from './orchestrator'
+import type { SourceResult } from './sources/adapter'
 
 const PAGE_W = 612
 const PAGE_H = 792
@@ -219,6 +220,153 @@ class Writer {
   }
 }
 
+// ── SOURCE CONFIDENCE TABLE ───────────────────────────────────────────────────
+function sourceStatusColor(status: string) {
+  switch (status) {
+    case 'VERIFIED':            return C_GREEN
+    case 'UNAVAILABLE':         return C_RED
+    case 'NEEDS_HUMAN_REVIEW':  return C_AMBER
+    case 'AI_ESTIMATE':         return C_AMBER
+    default:                    return C_GRAY
+  }
+}
+
+function sourceStatusBadge(status: string): string {
+  switch (status) {
+    case 'VERIFIED':            return 'VERIFIED'
+    case 'UNAVAILABLE':         return 'UNAVAILABLE'
+    case 'NEEDS_HUMAN_REVIEW':  return 'NEEDS REVIEW'
+    case 'AI_ESTIMATE':         return 'AI ESTIMATE'
+    default:                    return status
+  }
+}
+
+function classificationLabel(c: string): string {
+  switch (c) {
+    case 'PUBLIC_RECORD':                           return 'Public Record'
+    case 'OFFICIAL_PORTAL_ONLY':                    return 'Portal Only'
+    case 'API_AVAILABLE_BUT_SUBSCRIPTION_REQUIRED': return 'Subscription'
+    case 'MANUAL_REVIEW_REQUIRED':                  return 'Manual Review'
+    case 'PAID_PORTAL':                             return 'Paid Portal'
+    case 'MARKET_LEVEL_ONLY':                       return 'Market Level'
+    case 'AI_INFERENCE':                            return 'AI Inference'
+    default:                                        return c
+  }
+}
+
+function drawSourceConfidencePage(
+  w: Writer,
+  bold: PDFFont,
+  reg: PDFFont,
+  mono: PDFFont,
+  sources: SourceResult[],
+  hasManualReview: boolean,
+): void {
+  w.newPage()
+
+  // Section header
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: PAGE_W, height: 28, color: C_BG2 })
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: 4, height: 28, color: C_CYAN })
+  w.page.drawText('SOURCE CONFIDENCE TABLE', { x: MARGIN + 10, y: w.y + 8, size: 11, font: bold, color: C_NAVY })
+  w.page.drawText('Public record sources queried for this report — each source independently verified', {
+    x: MARGIN + 10, y: w.y - 4, size: 7.5, font: reg, color: C_GRAY,
+  })
+  w.y -= 32
+
+  // Column headers
+  const COL_SOURCE  = 0
+  const COL_CLASS   = 145
+  const COL_STATUS  = 235
+  const COL_CONF    = 315
+  const COL_MACHINE = 355
+  const COL_NOTES   = 395
+
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 3, width: CONTENT_W, height: 15, color: C_BG2 })
+  const hdrSize = 7.5
+  const hdrColor = C_MED
+  w.page.drawText('SOURCE',       { x: MARGIN + COL_SOURCE,  y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.page.drawText('TYPE',         { x: MARGIN + COL_CLASS,   y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.page.drawText('STATUS',       { x: MARGIN + COL_STATUS,  y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.page.drawText('CONF',         { x: MARGIN + COL_CONF,    y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.page.drawText('API',          { x: MARGIN + COL_MACHINE, y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.page.drawText('NOTES',        { x: MARGIN + COL_NOTES,   y: w.y, size: hdrSize, font: bold, color: hdrColor })
+  w.y -= 17
+
+  // Source rows
+  let rowNum = 0
+  for (const src of sources) {
+    w.ensure(16)
+    if (rowNum % 2 === 0) {
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 3, width: CONTENT_W, height: 14, color: C_BG, opacity: 0.6 })
+    }
+
+    const statusCol = sourceStatusColor(src.status)
+    const badge = sourceStatusBadge(src.status)
+
+    // Source name (truncated)
+    w.page.drawText(src.source_name.slice(0, 24), { x: MARGIN + COL_SOURCE, y: w.y, size: 8, font: bold, color: C_DARK })
+    // Classification
+    w.page.drawText(classificationLabel(src.classification), { x: MARGIN + COL_CLASS, y: w.y, size: 7.5, font: reg, color: C_MED })
+    // Status badge
+    const bw = 72
+    w.page.drawRectangle({ x: MARGIN + COL_STATUS, y: w.y - 2, width: bw, height: 11, color: statusCol, opacity: 0.12 })
+    w.page.drawText(badge, { x: MARGIN + COL_STATUS + 2, y: w.y, size: 7, font: bold, color: statusCol })
+    // Confidence
+    w.page.drawText(src.status === 'VERIFIED' ? `${src.confidence}%` : '-', { x: MARGIN + COL_CONF, y: w.y, size: 7.5, font: mono, color: C_GRAY })
+    // Machine readable
+    w.page.drawText(src.machine_readable ? '[OK]' : '[FAIL]', { x: MARGIN + COL_MACHINE, y: w.y, size: 7.5, font: mono, color: src.machine_readable ? C_GREEN : C_AMBER })
+    // Notes (short)
+    const noteText = (src.notes ?? src.fallback_behavior).slice(0, 45)
+    w.page.drawText(noteText, { x: MARGIN + COL_NOTES, y: w.y, size: 6.5, font: reg, color: C_GRAY })
+
+    w.y -= 15
+    rowNum++
+  }
+
+  w.gap(14)
+
+  // Summary counts
+  const verified = sources.filter(s => s.status === 'VERIFIED').length
+  const unavailable = sources.filter(s => s.status === 'UNAVAILABLE').length
+  const needsReview = sources.filter(s => s.status === 'NEEDS_HUMAN_REVIEW').length
+
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 28, width: CONTENT_W, height: 36, color: C_BG })
+  w.y -= 6
+  w.page.drawText(`${verified} VERIFIED    ${unavailable} UNAVAILABLE    ${needsReview} MANUAL REVIEW REQUIRED`, {
+    x: MARGIN + 10, y: w.y, size: 9, font: bold, color: C_DARK,
+  })
+  w.y -= 14
+  w.page.drawText(
+    'VERIFIED = live API response received and parsed. UNAVAILABLE = source unreachable or no data returned. NEEDS REVIEW = portal-only source, human lookup required.',
+    { x: MARGIN + 10, y: w.y, size: 7, font: reg, color: C_GRAY },
+  )
+  w.y -= 20
+
+  // Manual Review Required section
+  if (hasManualReview) {
+    w.gap(8)
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 4, width: 3, height: 18, color: C_AMBER })
+    w.page.drawText('MANUAL REVIEW REQUIRED', { x: MARGIN + 10, y: w.y, size: 10, font: bold, color: C_AMBER })
+    w.y -= 14
+    w.page.drawLine({ start: { x: MARGIN, y: w.y }, end: { x: MARGIN + CONTENT_W, y: w.y }, thickness: 0.5, color: C_LGRAY })
+    w.y -= 8
+
+    const reviewSources = sources.filter(s => s.status === 'NEEDS_HUMAN_REVIEW')
+    for (const src of reviewSources) {
+      w.ensure(32)
+      w.page.drawText(src.source_name, { x: MARGIN + 4, y: w.y, size: 9, font: bold, color: C_DARK })
+      w.y -= 12
+      w.page.drawText(`Portal: ${src.source_url.slice(0, 90)}`, { x: MARGIN + 12, y: w.y, size: 7.5, font: mono, color: C_CYAN })
+      w.y -= 11
+      if (src.notes) {
+        w.page.drawText(src.notes.slice(0, 100), { x: MARGIN + 12, y: w.y, size: 7.5, font: reg, color: C_MED })
+        w.y -= 11
+      }
+      w.y -= 4
+    }
+  }
+}
+
 // ── STREET VIEW FETCH (Phase 2 — optional, requires GOOGLE_MAPS_API_KEY) ──────
 async function fetchStreetView(address: string, apiKey: string): Promise<Uint8Array | null> {
   // BLOCKER: Requires GOOGLE_MAPS_API_KEY secret. Set via: wrangler secret put GOOGLE_MAPS_API_KEY
@@ -333,7 +481,12 @@ export async function generatePDFReport(
     { size: 7.5, color: C_DARK, indent: 8, maxW: CONTENT_W - 16 },
   )
 
-  // ── PAGE 2 — VERIFIED DATA SUMMARY ────────────────────────────────────────
+  // ── PAGE 2 — SOURCE CONFIDENCE TABLE ─────────────────────────────────────
+  if (report.source_registry?.length) {
+    drawSourceConfidencePage(w, bold, reg, mono, report.source_registry, report.manual_review_required ?? false)
+  }
+
+  // ── PAGE 3 — VERIFIED DATA SUMMARY ────────────────────────────────────────
   w.newPage()
   w.heading('Verified Data Summary — Public Record Sources Only')
   w.text(

@@ -100,10 +100,13 @@ app.get('/', (c) =>
       webhook:  'POST /api/v1/webhook/stripe',
       mls:      'POST /api/v1/mls/comps',
       admin: {
-        keys:   'GET  /admin/keys',
-        key:    'GET  /admin/keys/:id',
-        revoke: 'POST /admin/keys/:id/revoke',
-        report: 'GET  /admin/reports/:audit_id',
+        keys:          'GET  /admin/keys',
+        key:           'GET  /admin/keys/:id',
+        revoke:        'POST /admin/keys/:id/revoke',
+        report:        'GET  /admin/reports/:audit_id',
+        review_queue:  'GET  /admin/review-queue',
+        review_resolve:'POST /admin/review-queue/:audit_id/resolve',
+        usage_export:  'GET  /admin/usage/export',
       },
     },
   }),
@@ -489,6 +492,63 @@ app.get('/admin/usage/export', async (c) => {
     rows.push({ api_key: keyId, month, reports_generated: raw ? parseInt(raw, 10) : 0 })
   }
   return c.json({ month, count: rows.length, usage: rows })
+})
+
+// ── MANUAL REVIEW QUEUE ───────────────────────────────────────────────────────
+
+// GET /admin/review-queue — paginated list of pending manual review items
+app.get('/admin/review-queue', async (c) => {
+  if (!c.env.SEVENNOVA_KEYS) return c.json({ error: 'KV not configured' }, 503)
+  const cursor = c.req.query('cursor') ?? undefined
+  const limitParam = parseInt(c.req.query('limit') ?? '20', 10)
+  const limit = Math.min(Math.max(limitParam, 1), 100)
+  const resolved = c.req.query('resolved') === 'true'
+
+  const listed = await c.env.SEVENNOVA_KEYS.list({ prefix: 'review:', cursor, limit: limit * 3 })
+  const items: Record<string, unknown>[] = []
+
+  for (const kv of (listed.keys as Array<{ name: string }>) ?? []) {
+    if (items.length >= limit) break
+    const raw = await c.env.SEVENNOVA_KEYS.get(kv.name)
+    if (!raw) continue
+    try {
+      const entry = JSON.parse(raw) as Record<string, unknown>
+      if (Boolean(entry.resolved) !== resolved) continue
+      items.push({ kv_key: kv.name, ...entry })
+    } catch { /* skip malformed */ }
+  }
+
+  return c.json({
+    count: items.length,
+    resolved,
+    next_cursor: (listed as unknown as { cursor?: string }).cursor ?? null,
+    items,
+  })
+})
+
+// POST /admin/review-queue/:audit_id/resolve — mark a review item resolved
+app.post('/admin/review-queue/:audit_id/resolve', async (c) => {
+  if (!c.env.SEVENNOVA_KEYS) return c.json({ error: 'KV not configured' }, 503)
+  const auditId = c.req.param('audit_id')
+  const key = `review:${auditId}`
+  const raw = await c.env.SEVENNOVA_KEYS.get(key)
+  if (!raw) return c.json({ error: 'Review item not found' }, 404)
+
+  let entry: Record<string, unknown> = {}
+  try { entry = JSON.parse(raw) } catch {
+    return c.json({ error: 'Malformed review record' }, 500)
+  }
+
+  let body: Record<string, unknown> = {}
+  try { body = await c.req.json() } catch { /* no body required */ }
+
+  entry.resolved = true
+  entry.resolved_at = new Date().toISOString()
+  entry.resolved_by = body.resolved_by ?? 'admin'
+  entry.resolution_notes = body.notes ?? ''
+
+  await c.env.SEVENNOVA_KEYS.put(key, JSON.stringify(entry), { expirationTtl: 86400 * 90 })
+  return c.json({ resolved: true, audit_id: auditId, resolved_at: entry.resolved_at })
 })
 
 // Phase 5: Customer usage endpoint (own key only — no admin required)

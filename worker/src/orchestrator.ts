@@ -4,6 +4,7 @@ import { sendEmail } from './agents/resend'
 import { storeAuditRecord } from './audit'
 import { fetchTOCTier } from './toc'
 import { fetchSeismic } from './seismic'
+import { collectSourceRegistry, type SourceResult } from './sources/adapter'
 
 export interface Env {
   ANTHROPIC_API_KEY: string
@@ -73,6 +74,8 @@ export interface PropertyReport {
   unverified_items: string[]
   disclaimer: string
   cache_hit: boolean
+  source_registry?: SourceResult[]
+  manual_review_required?: boolean
 }
 
 export interface Address {
@@ -665,6 +668,46 @@ export async function generateReport(
     }
   }
 
+  // Build source registry from prefetched parcel data — no extra API calls
+  const registryParams = {
+    address: fullAddress,
+    street, city, state,
+    zip_code: zipCode,
+    lat: (parcelData.zimas_lat as number | null) ?? undefined,
+    lon: (parcelData.zimas_lon as number | null) ?? undefined,
+    apn: apn ?? undefined,
+    prefetched: {
+      zimas: parcelData.zimas_source === 'LA_CITY_ZIMAS_LIVE' ? {
+        source: 'zimas' as const,
+        lat: parcelData.zimas_lat as number,
+        lon: parcelData.zimas_lon as number,
+        zone_code: String(parcelData.zimas_zone_code ?? ''),
+        zone_class: String(parcelData.zimas_zone_class ?? ''),
+        height_district: '1',
+        zone_description: String(parcelData.zimas_zone_description ?? ''),
+        max_far: parcelData.zimas_max_far as number | null,
+        height_limit_ft: parcelData.zimas_height_limit_ft as number | null,
+        height_limit_stories: parcelData.zimas_height_limit_stories as number | null,
+        raw: {},
+      } : null,
+      ladbs: parcelData.ladbs_source === 'LADBS_LIVE' ? {
+        active_violations: parcelData.ladbs_active_violations as number,
+        permit_count: parcelData.ladbs_permit_count as number,
+        violation_count: parcelData.ladbs_active_violations as number,
+      } : null,
+      fema: parcelData.fema_source === 'FEMA_LIVE' ? { flood_zone: parcelData.fema_flood_zone as string | null } : null,
+      calfire: parcelData.calfire_source === 'CALFIRE_LIVE' ? { fire_hazard_zone: String(parcelData.fire_hazard_zone ?? 'NONE') } : null,
+      census: parcelData.census_source === 'CENSUS_ACS_LIVE' ? {
+        median_income: parcelData.census_median_income as number | null,
+        rent_burden_severe_pct: parcelData.census_rent_burden as number | null,
+        census_tract: parcelData.census_tract as string | null,
+      } : null,
+      hud: parcelData.hud_source === 'HUD_LIVE' ? { opportunity_zone: Boolean(parcelData.opportunity_zone) } : null,
+    },
+  }
+  const sourceRegistry = collectSourceRegistry(registryParams)
+  const anyManualReview = sourceRegistry.some(r => r.manual_review_required && r.status === 'NEEDS_HUMAN_REVIEW')
+
   // Skill routing
   const normalizedTier = ['basic', 'full', 'institutional'].includes(tier) ? tier : 'full'
   let skills = [...(TIER_SKILLS[normalizedTier] ?? TIER_SKILLS.full)]
@@ -918,6 +961,8 @@ export async function generateReport(
       'For informational purposes only. Not a licensed appraisal. Not legal advice. ' +
       'Consult a licensed professional before making any real estate or financial decision. © 2026 SevenNova.ai',
     cache_hit: cacheHit,
+    source_registry: sourceRegistry,
+    manual_review_required: anyManualReview,
   }
 
   if (env.SEVENNOVA_KEYS) {
@@ -926,6 +971,23 @@ export async function generateReport(
 
   // Phase 5 — Audit trail (fire-and-forget, non-blocking)
   storeAuditRecord(env, report, userKey, null).catch(() => {})
+
+  // Manual review queue — store any NEEDS_HUMAN_REVIEW sources, 90-day TTL
+  if (env.SEVENNOVA_KEYS && anyManualReview) {
+    const reviewSources = sourceRegistry.filter(r => r.status === 'NEEDS_HUMAN_REVIEW')
+    env.SEVENNOVA_KEYS.put(
+      `review:${requestId}`,
+      JSON.stringify({
+        audit_id: requestId,
+        address: fullAddress,
+        user_key: userKey,
+        timestamp: now,
+        resolved: false,
+        sources: reviewSources.map(r => ({ source_name: r.source_name, notes: r.notes, source_url: r.source_url })),
+      }),
+      { expirationTtl: 86400 * 90 },
+    ).catch(() => {})
+  }
 
   // Phase 5 — Monthly usage accounting (separate from rate limiting — billing source of truth)
   if (env.SEVENNOVA_KEYS && userKey !== 'anonymous') {
