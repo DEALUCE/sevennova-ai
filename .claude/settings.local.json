@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx wrangler *)",
+      "PowerShell(curl.exe -X POST https://api.sevennova.ai/api/v1/report -H \"X-API-Key: key_dan_dev\" -H \"Content-Type: application/json\" -d '{\\\\\"street\\\\\":\\\\\"123 Main St\\\\\",\\\\\"city\\\\\":\\\\\"Los Angeles\\\\\",\\\\\"state\\\\\":\\\\\"CA\\\\\"}')",
+      "Bash(curl -s -X POST https://api.sevennova.ai/api/v1/report -H 'X-API-Key: key_dan_dev' -H 'Content-Type: application/json' -d '{\"street\":\"123 Main St\",\"city\":\"Los Angeles\",\"state\":\"CA\"}')",
+      "Bash(curl -s -X POST https://api.sevennova.ai/api/v1/report -H 'X-API-Key: key_dan_dev' -H 'Content-Type: application/json' -d '{\"street\":\"3612 W Jefferson Blvd\",\"city\":\"Los Angeles\",\"state\":\"CA\",\"zip_code\":\"90016\"}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Time: {d[\\\\\"report\\\\\"][\\\\\"generation_time_seconds\\\\\"]}s | Confidence: {d[\\\\\"report\\\\\"][\\\\\"overall_confidence\\\\\"]}% | Deal: {d[\\\\\"report\\\\\"][\\\\\"deal_score\\\\\"]}'\\)\")",
+      "Bash(npm run *)",
+      "Bash(python3 -c ' *)",
+      "Bash(npx wrangler@3 pages deploy out --project-name=sevennova-ai --commit-dirty=true)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\)['report']; print\\(f'Time: {d[\\\\\"generation_time_seconds\\\\\"]}s | cache_hit: {d[\\\\\"cache_hit\\\\\"]} | Confidence: {d[\\\\\"overall_confidence\\\\\"]}%'\\)\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\dan_i\\\\Documents\\\\GitHub\\\\sevennova\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(ConvertTo-Json)",
+      "Bash(git checkout *)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

@@ -30,17 +30,25 @@ function AnalyzeInner() {
   const [html, setHtml] = useState('');
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  const [apiKey, setApiKey] = useState<string | null>(null);
 
-  // Auto-run if address came from homepage
   useEffect(() => {
+    const key = localStorage.getItem('sevennova_api_key');
+    if (!key) {
+      router.push('/pricing');
+      return;
+    }
+    setApiKey(key);
     if (searchParams.get('address')) {
-      handleGenerate();
+      handleGenerate(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleGenerate() {
+  async function handleGenerate(keyOverride?: string) {
     if (!address.trim()) return;
+    const key = keyOverride ?? apiKey;
+    if (!key) { router.push('/pricing'); return; }
     setStatus('loading');
     setError('');
     setHtml('');
@@ -51,7 +59,7 @@ function AnalyzeInner() {
     try {
       const res = await fetch(`${API_BASE}/api/v1/report/html`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
         body: JSON.stringify({
           street: address.trim(),
           zip_code: zip || undefined,
@@ -78,7 +86,7 @@ function AnalyzeInner() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handleGenerate();
+    handleGenerate(apiKey ?? undefined);
   };
 
   return (

@@ -8,17 +8,23 @@ routes = [
 
 [[kv_namespaces]]
 binding = "SEVENNOVA_KEYS"
-id = "7a4fa7318fea421baf31c803ac4ab30b"
+id = "8affd408b10d498285e07ccdd6e6338a"
+preview_id = "e72fc11e65c745e7b22874e94769fe9a"
 
 [vars]
 CORS_ORIGINS = "https://sevennova.ai,http://localhost:3000"
 DEV_MODE = "false"
 OLLAMA_URL = "http://localhost:11434"
 
+[triggers]
+crons = ["0 6 * * *", "0 2 * * *"]
+
 # Secrets — set via: wrangler secret put <NAME>
 # ANTHROPIC_API_KEY
 # STRIPE_SECRET_KEY
-# STRIPE_WEBHOOK_SECRET
+# STRIPE_WEBHOOK_SECRET     (required — webhook rejected if not set)
 # STRIPE_PRICE_BASIC
 # STRIPE_PRICE_FULL
 # STRIPE_PRICE_INSTITUTIONAL
+# RESEND_API_KEY
+# ADMIN_SECRET              (Phase 4 — set manually after deploy; protects /admin/* routes)

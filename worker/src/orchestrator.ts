@@ -1,5 +1,10 @@
 import { SKILL_PROMPTS, NARRATIVE_PROMPT } from './skill-prompts'
 import { fetchZoning, type ZimasResult } from './zimas'
+import { sendEmail } from './agents/resend'
+import { storeAuditRecord } from './audit'
+import { fetchTOCTier } from './toc'
+import { fetchSeismic } from './seismic'
+import { collectSourceRegistry, type SourceResult } from './sources/adapter'
 
 export interface Env {
   ANTHROPIC_API_KEY: string
@@ -11,13 +16,28 @@ export interface Env {
   CORS_ORIGINS: string
   DEV_MODE?: string
   OLLAMA_URL?: string
-  SEVENNOVA_KEYS: KVNamespace
+  RESEND_API_KEY: string
+  ADMIN_SECRET?: string          // Phase 4 — set via: wrangler secret put ADMIN_SECRET
+  GOOGLE_MAPS_API_KEY?: string   // Phase 2 — optional Street View on PDF cover; wrangler secret put GOOGLE_MAPS_API_KEY
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  SEVENNOVA_KEYS: any
 }
 
+/**
+ * PHASE 1 — Every DataPoint includes source provenance + verification status.
+ * status: VERIFIED   = confirmed from a live public-record API
+ *         INFERRED   = AI-interpreted from available data
+ *         UNAVAILABLE = source query failed or returned no data
+ *         NEEDS_HUMAN_REVIEW = data exists but requires expert validation
+ */
 export interface DataPoint {
   value: unknown
   confidence: number
   freshness: string
+  source?: string
+  source_url?: string
+  retrieved_at?: string
+  status?: 'VERIFIED' | 'INFERRED' | 'UNAVAILABLE' | 'NEEDS_HUMAN_REVIEW'
 }
 
 export interface SkillLog {
@@ -53,6 +73,9 @@ export interface PropertyReport {
   assumptions: string[]
   unverified_items: string[]
   disclaimer: string
+  cache_hit: boolean
+  source_registry?: SourceResult[]
+  manual_review_required?: boolean
 }
 
 export interface Address {
@@ -318,6 +341,146 @@ Label uncertain data as UNVERIFIED. Include confidence scores (0-100). Never hal
   }
 }
 
+// ── FREE DATA FETCHERS ────────────────────────────────────────────────────────
+
+async function fetchAssessor(street: string, _city: string, zipCode?: string) {
+  try {
+    const q = encodeURIComponent(`${street}${zipCode ? ' ' + zipCode : ''}`)
+    const res = await fetch(
+      `https://assessor.lacounty.gov/api/assessor/parcel/search?address=${q}&limit=1`,
+      { headers: { Accept: 'application/json' } },
+    )
+    if (!res.ok) return null
+    const data = await res.json() as { results?: Array<Record<string, unknown>> }
+    const p = data.results?.[0]
+    if (!p) return null
+    return {
+      lot_size_sf: p.LotSizeSqFt ?? p.lot_size_sqft ?? null,
+      year_built: p.YearBuilt ?? p.year_built ?? null,
+      last_sale_price: p.LastSaleAmount ?? p.sale_price ?? null,
+      last_sale_date: p.LastSaleDate ?? p.sale_date ?? null,
+    }
+  } catch { return null }
+}
+
+// Parse "3612 W Jefferson Blvd" → { houseNum: "3612", streetName: "JEFFERSON" }
+function parseStreetParts(street: string): { houseNum: string; streetName: string } {
+  const parts = street.trim().split(/\s+/)
+  const houseNum = /^\d+/.test(parts[0]) ? parts[0] : ''
+  // Remove house number + directional prefix (N/S/E/W) + suffix (AVE/BLVD/ST/etc)
+  const directionals = new Set(['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'])
+  const suffixes = new Set(['AVE', 'BLVD', 'ST', 'DR', 'RD', 'LN', 'PL', 'CT', 'WAY', 'TER', 'CIR', 'HWY', 'FWY'])
+  const tokens = parts.slice(houseNum ? 1 : 0)
+    .map(t => t.toUpperCase())
+    .filter(t => !directionals.has(t) && !suffixes.has(t))
+  return { houseNum, streetName: tokens.join(' ') || (parts[1]?.toUpperCase() ?? '') }
+}
+
+async function fetchLADBS(street: string, _zipCode?: string) {
+  try {
+    const { houseNum, streetName } = parseStreetParts(street)
+    const permitUrl = houseNum
+      ? `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&address_start=${encodeURIComponent(houseNum)}&$limit=50`
+      : `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&$limit=50`
+    const violationUrl = `https://data.lacity.org/resource/u82d-eh7z.json?stname=${encodeURIComponent(streetName)}&$limit=50`
+    const [permitsRes, violationsRes] = await Promise.all([
+      fetch(permitUrl, { headers: { Accept: 'application/json' } }),
+      fetch(violationUrl, { headers: { Accept: 'application/json' } }),
+    ])
+    const permits = permitsRes.ok ? await permitsRes.json() as Array<Record<string, unknown>> : []
+    const violations = violationsRes.ok ? await violationsRes.json() as Array<Record<string, unknown>> : []
+    // u82d-eh7z: stat='O' means open/active
+    const active = violations.filter(r => String(r.stat ?? '').toUpperCase() === 'O')
+    return { active_violations: active.length, permit_count: permits.length, violation_count: violations.length }
+  } catch { return null }
+}
+
+async function fetchFEMA(lat: number, lon: number) {
+  try {
+    const res = await fetch(
+      `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE&f=json`,
+    )
+    if (!res.ok) return null
+    const fData = await res.json() as { features?: Array<{ attributes?: { FLD_ZONE?: string } }> }
+    const zone = fData.features?.[0]?.attributes?.FLD_ZONE ?? null
+    return { flood_zone: zone }
+  } catch { return null }
+}
+
+async function fetchCalFire(lat: number, lon: number) {
+  try {
+    // SRA (State Responsibility Area) FHSZ — urban areas return 0 features → NONE
+    const res = await fetch(
+      `https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSZSRA_23_3/FeatureServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FHSZ,FHSZ_Description&f=json`,
+    )
+    if (!res.ok) return null
+    const cData = await res.json() as { features?: Array<{ attributes?: { FHSZ?: number; FHSZ_Description?: string } }> }
+    const attrs = cData.features?.[0]?.attributes
+    const zone = attrs?.FHSZ_Description ?? (attrs?.FHSZ != null ? String(attrs.FHSZ) : 'NONE')
+    return { fire_hazard_zone: zone }
+  } catch { return null }
+}
+
+async function geocodeToTract(lat: number, lon: number): Promise<{ state: string; county: string; tract: string; geoid: string } | null> {
+  try {
+    const res = await fetch(
+      `https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=${lon}&y=${lat}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`,
+    )
+    if (!res.ok) return null
+    const data = await res.json() as {
+      result?: {
+        geographies?: {
+          'Census Tracts'?: Array<{ STATE: string; COUNTY: string; TRACT: string; GEOID: string }>
+        }
+      }
+    }
+    const tract = data.result?.geographies?.['Census Tracts']?.[0]
+    if (!tract) return null
+    return { state: tract.STATE, county: tract.COUNTY, tract: tract.TRACT, geoid: tract.GEOID }
+  } catch { return null }
+}
+
+async function fetchCensus(lat: number, lon: number) {
+  try {
+    const tractInfo = await geocodeToTract(lat, lon)
+    if (!tractInfo) return null
+    // CensusReporter: keyless API — returns ACS5 B19013 (median income) and B25070 (rent burden)
+    const geoId = `14000US${tractInfo.geoid}`
+    const res = await fetch(
+      `https://api.censusreporter.org/1.0/data/show/latest?table_ids=B19013,B25070&geo_ids=${geoId}`,
+    )
+    if (!res.ok) return null
+    const data = await res.json() as {
+      data?: Record<string, {
+        B19013?: { estimate?: { B19013001?: number } }
+        B25070?: { estimate?: { B25070010?: number } }
+      }>
+    }
+    const row = data.data?.[geoId]
+    if (!row) return null
+    return {
+      median_income: row.B19013?.estimate?.B19013001 ?? null,
+      rent_burden_severe_pct: row.B25070?.estimate?.B25070010 ?? null,
+      census_tract: tractInfo.geoid,
+    }
+  } catch { return null }
+}
+
+async function fetchHUD(lat: number, lon: number) {
+  try {
+    const tractInfo = await geocodeToTract(lat, lon)
+    if (!tractInfo) return null
+    const geoid10 = tractInfo.geoid
+    // Layer 13 is the Opportunity Zones polygon layer
+    const res = await fetch(
+      `https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/Opportunity_Zones/FeatureServer/13/query?where=GEOID10%3D'${geoid10}'&outFields=GEOID10%2CSTATE%2CCOUNTY%2CTRACT&f=json`,
+    )
+    if (!res.ok) return null
+    const data = await res.json() as { features?: unknown[] }
+    return { opportunity_zone: (data.features?.length ?? 0) > 0 }
+  } catch { return null }
+}
+
 export async function generateReport(
   street: string,
   city: string,
@@ -327,6 +490,7 @@ export async function generateReport(
   tier: string,
   requesterEmail: string | undefined,
   env: Env,
+  userKey = 'anonymous',
 ): Promise<PropertyReport> {
   const start = Date.now()
   const requestId = crypto.randomUUID().replace(/-/g, '')
@@ -338,44 +502,211 @@ export async function generateReport(
 
   const address: Address = { street, city, state, zip_code: zipCode, apn, full_address: fullAddress }
 
+  // Report-level cache — skips all API calls and skill calls on hit
+  const normalizedTierEarly = ['basic', 'full', 'institutional'].includes(tier) ? tier : 'full'
+  const reportCacheKey = 'report:' + fullAddress.toLowerCase().replace(/\s+/g, '_') + ':' + normalizedTierEarly
+  const TTL_MS = 24 * 60 * 60 * 1000
+  if (env.SEVENNOVA_KEYS) {
+    const cachedReport = await env.SEVENNOVA_KEYS.get(reportCacheKey)
+    if (cachedReport) {
+      const parsed = JSON.parse(cachedReport) as { report: PropertyReport; cached_at: number }
+      if (Date.now() - parsed.cached_at < TTL_MS) {
+        return { ...parsed.report, cache_hit: true, generation_time_seconds: Math.round((Date.now() - start) / 100) / 10 }
+      }
+    }
+  }
+
   // Geocode: detect commercial/DC zone signals
-  const commercialKeywords = ['blvd', 'ave', 'industrial', 'office', 'commercial']
+  const commercialKeywords = ['industrial', 'commercial']
   const isCommercial = commercialKeywords.some(kw => street.toLowerCase().includes(kw))
   const dcZips = new Set(['90245', '90017', '90028', '91731'])
   const isDCZone = zipCode ? dcZips.has(zipCode) : false
 
-  // Fetch real zoning from ZIMAS (LA City, free, no auth)
-  let zimas: ZimasResult | null = null
-  try {
-    zimas = await fetchZoning(street, city, state, zipCode)
-  } catch {
-    // Non-fatal — skills fall back to AI estimation if ZIMAS unavailable
+  const cacheKey = 'parcel:' + fullAddress.toLowerCase().replace(/\s+/g, '_')
+  let cacheHit = false
+  let parcelData: Record<string, unknown> = {}
+
+  const cached = env.SEVENNOVA_KEYS ? await env.SEVENNOVA_KEYS.get(cacheKey) : null
+  if (cached) {
+    const parsed = JSON.parse(cached) as { parcelData: Record<string, unknown>; cached_at: number }
+    if (Date.now() - parsed.cached_at < TTL_MS) {
+      parcelData = parsed.parcelData
+      cacheHit = true
+    }
   }
 
-  // Override commercial detection if ZIMAS confirms a C/M zone
-  const zimasZoneClass = zimas?.zone_class ?? ''
-  const isCommercialFromZimas = /^(C|M|CM|CR)/.test(zimasZoneClass)
+  if (!cacheHit) {
+    // Phase 1: ZIMAS first — provides lat/lon for geo-dependent fetchers
+    const [zimasResult, assessorResult] = await Promise.allSettled([
+      fetchZoning(street, city, state, zipCode),
+      fetchAssessor(street, city, zipCode),
+    ])
+    const zimasPhase1: ZimasResult | null = zimasResult.status === 'fulfilled' ? zimasResult.value : null
+    const lat = zimasPhase1?.lat ?? 34.0522
+    const lon = zimasPhase1?.lon ?? -118.2437
 
-  const parcelData = {
-    full_address: fullAddress,
+    // Phase 2: All geo-dependent fetchers in parallel using resolved lat/lon
+    const [ladbsResult, femaResult, calfireResult, censusResult, hudResult, tocResult, seismicResult] =
+      await Promise.allSettled([
+        fetchLADBS(street, zipCode),
+        fetchFEMA(lat, lon),
+        fetchCalFire(lat, lon),
+        fetchCensus(lat, lon),
+        fetchHUD(lat, lon),
+        fetchTOCTier(lat, lon),    // Quick win 2 — LA City GIS TOC layer
+        fetchSeismic(lat, lon),    // Quick win 4 — USGS ShakeMap
+      ])
+
+    const zimas: ZimasResult | null = zimasPhase1
+    const assessor = assessorResult.status === 'fulfilled' ? assessorResult.value : null
+    const ladbs = ladbsResult.status === 'fulfilled' ? ladbsResult.value : null
+    const fema = femaResult.status === 'fulfilled' ? femaResult.value : null
+    const calfire = calfireResult.status === 'fulfilled' ? calfireResult.value : null
+    const census = censusResult.status === 'fulfilled' ? censusResult.value : null
+    const hud = hudResult.status === 'fulfilled' ? hudResult.value : null
+    const toc = tocResult.status === 'fulfilled' ? tocResult.value : null
+    const seismic = seismicResult.status === 'fulfilled' ? seismicResult.value : null
+
+    // Quick win 1 — Buildable SF + Max Units: pure math from ZIMAS FAR × Assessor lot size
+    // Status VERIFIED only when both source values are confirmed live data
+    const lotSizeSf = (assessor?.lot_size_sf as number | null) ?? null
+    const zimasFar = zimas?.max_far ?? null
+    const buildableSfCalc = (lotSizeSf && zimasFar) ? Math.round(lotSizeSf * zimasFar) : null
+
+    const zoneClass = zimas?.zone_class ?? ''
+    let maxUnitsByRightCalc: number | null = null
+    if (lotSizeSf && zoneClass) {
+      // LAMC Title 12 base density by zone class (simplified, by-right only, no ADU bonus)
+      if (zoneClass.startsWith('R1'))      maxUnitsByRightCalc = 2          // house + 1 ADU by SB 9
+      else if (zoneClass.startsWith('R1.5')) maxUnitsByRightCalc = Math.max(3, Math.floor(lotSizeSf / 1200))
+      else if (zoneClass === 'RD1.5')      maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD2')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD3')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD4')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1600)
+      else if (zoneClass === 'RD5')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 2000)
+      else if (zoneClass === 'RD6')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 2400)
+      else if (zoneClass.startsWith('R2')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 1500)
+      else if (zoneClass.startsWith('R3')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 800)
+      else if (zoneClass.startsWith('R4')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 400)
+      else if (zoneClass.startsWith('R5')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 200)
+      // C/M zones: residential density not applicable by-right (commercial use)
+    }
+
+    // TOC bonus units (if in TOC area and residential zone)
+    const TOC_BONUS: Record<number, number> = { 1: 0.225, 2: 0.325, 3: 0.50, 4: 0.80 }
+    let maxUnitsTOCCalc: number | null = null
+    if (maxUnitsByRightCalc !== null && toc?.tier) {
+      const bonus = TOC_BONUS[toc.tier] ?? 0
+      maxUnitsTOCCalc = Math.floor(maxUnitsByRightCalc * (1 + bonus))
+    }
+
+    const zimasZoneClass = zimas?.zone_class ?? ''
+    const isCommercialFromZimas = /^(C|M|CM|CR)/.test(zimasZoneClass)
+
+    parcelData = {
+      full_address: fullAddress,
+      street, city, state,
+      zip_code: zipCode ?? null,
+      apn: apn ?? null,
+      is_commercial: isCommercial || isCommercialFromZimas,
+      is_data_center_zone: isDCZone,
+      zimas_zone_code: zimas?.zone_code ?? null,
+      zimas_zone_class: zimas?.zone_class ?? null,
+      zimas_zone_description: zimas?.zone_description ?? null,
+      zimas_max_far: zimas?.max_far ?? null,
+      zimas_height_limit_ft: zimas?.height_limit_ft ?? null,
+      zimas_height_limit_stories: zimas?.height_limit_stories ?? null,
+      zimas_lat: zimas?.lat ?? null,
+      zimas_lon: zimas?.lon ?? null,
+      zimas_source: zimas?.error ? `ZIMAS_ERROR: ${zimas.error}` : (zimas ? 'LA_CITY_ZIMAS_LIVE' : 'UNAVAILABLE'),
+      freshness: zimas && !zimas.error ? 'LA_CITY_LIVE' : 'UNVERIFIED',
+      confidence: zimas && !zimas.error ? 90 : 0,
+      lot_size_sf: assessor?.lot_size_sf ?? null,
+      year_built: assessor?.year_built ?? null,
+      last_sale_price: assessor?.last_sale_price ?? null,
+      last_sale_date: assessor?.last_sale_date ?? null,
+      assessor_source: assessor ? 'LA_COUNTY_ASSESSOR_LIVE' : 'UNAVAILABLE',
+      ladbs_active_violations: ladbs?.active_violations ?? null,
+      ladbs_permit_count: ladbs?.permit_count ?? null,
+      ladbs_source: ladbs ? 'LADBS_LIVE' : 'UNAVAILABLE',
+      fema_flood_zone: fema?.flood_zone ?? null,
+      fema_source: fema ? 'FEMA_LIVE' : 'UNAVAILABLE',
+      fire_hazard_zone: calfire?.fire_hazard_zone ?? null,
+      calfire_source: calfire ? 'CALFIRE_LIVE' : 'UNAVAILABLE',
+      census_median_income: census?.median_income ?? null,
+      census_rent_burden: census?.rent_burden_severe_pct ?? null,
+      census_tract: census?.census_tract ?? null,
+      census_source: census ? 'CENSUS_ACS_LIVE' : 'UNAVAILABLE',
+      opportunity_zone: hud?.opportunity_zone ?? null,
+      hud_source: hud ? 'HUD_LIVE' : 'UNAVAILABLE',
+      // Quick win 2 — TOC Tier (LA City GIS)
+      toc_tier: toc?.tier ?? null,
+      toc_tier_label: toc?.tier_label ?? null,
+      toc_in_area: toc?.in_toc_area ?? false,
+      toc_source: toc && !toc.error ? 'LA_CITY_TOC_LIVE' : 'UNAVAILABLE',
+      toc_source_url: toc?.source_url ?? null,
+      toc_retrieved_at: toc?.retrieved_at ?? null,
+      toc_error: toc?.error ?? null,
+      // Quick win 4 — Seismic (USGS)
+      seismic_ss: seismic?.ss ?? null,
+      seismic_s1: seismic?.s1 ?? null,
+      seismic_pga: seismic?.pga ?? null,
+      seismic_risk_score: seismic?.risk_score ?? null,
+      seismic_risk_label: seismic?.risk_label ?? null,
+      seismic_source: seismic && !seismic.error ? 'USGS_SEISMIC_LIVE' : 'UNAVAILABLE',
+      seismic_source_url: seismic?.source_url ?? null,
+      seismic_retrieved_at: seismic?.retrieved_at ?? null,
+      // Quick win 1 — Buildable SF + Max Units (calculated from ZIMAS + Assessor)
+      buildable_sf_calc: buildableSfCalc,
+      max_units_by_right_calc: maxUnitsByRightCalc,
+      max_units_toc_calc: maxUnitsTOCCalc,
+      derived_fields_status: (zimasFar !== null && lotSizeSf !== null) ? 'VERIFIED_CALCULATED' : 'UNAVAILABLE',
+    }
+
+    if (env.SEVENNOVA_KEYS) {
+      await env.SEVENNOVA_KEYS.put(cacheKey, JSON.stringify({ parcelData, cached_at: Date.now() }))
+    }
+  }
+
+  // Build source registry from prefetched parcel data — no extra API calls
+  const registryParams = {
+    address: fullAddress,
     street, city, state,
-    zip_code: zipCode ?? null,
-    apn: apn ?? null,
-    is_commercial: isCommercial || isCommercialFromZimas,
-    is_data_center_zone: isDCZone,
-    // ZIMAS real data — present when available, null when not
-    zimas_zone_code: zimas?.zone_code ?? null,
-    zimas_zone_class: zimas?.zone_class ?? null,
-    zimas_zone_description: zimas?.zone_description ?? null,
-    zimas_max_far: zimas?.max_far ?? null,
-    zimas_height_limit_ft: zimas?.height_limit_ft ?? null,
-    zimas_height_limit_stories: zimas?.height_limit_stories ?? null,
-    zimas_lat: zimas?.lat ?? null,
-    zimas_lon: zimas?.lon ?? null,
-    zimas_source: zimas?.error ? `ZIMAS_ERROR: ${zimas.error}` : (zimas ? 'LA_CITY_ZIMAS_LIVE' : 'UNAVAILABLE'),
-    freshness: zimas && !zimas.error ? 'LA_CITY_LIVE' : 'UNVERIFIED',
-    confidence: zimas && !zimas.error ? 90 : 70,
+    zip_code: zipCode,
+    lat: (parcelData.zimas_lat as number | null) ?? undefined,
+    lon: (parcelData.zimas_lon as number | null) ?? undefined,
+    apn: apn ?? undefined,
+    prefetched: {
+      zimas: parcelData.zimas_source === 'LA_CITY_ZIMAS_LIVE' ? {
+        source: 'zimas' as const,
+        lat: parcelData.zimas_lat as number,
+        lon: parcelData.zimas_lon as number,
+        zone_code: String(parcelData.zimas_zone_code ?? ''),
+        zone_class: String(parcelData.zimas_zone_class ?? ''),
+        height_district: '1',
+        zone_description: String(parcelData.zimas_zone_description ?? ''),
+        max_far: parcelData.zimas_max_far as number | null,
+        height_limit_ft: parcelData.zimas_height_limit_ft as number | null,
+        height_limit_stories: parcelData.zimas_height_limit_stories as number | null,
+        raw: {},
+      } : null,
+      ladbs: parcelData.ladbs_source === 'LADBS_LIVE' ? {
+        active_violations: parcelData.ladbs_active_violations as number,
+        permit_count: parcelData.ladbs_permit_count as number,
+        violation_count: parcelData.ladbs_active_violations as number,
+      } : null,
+      fema: parcelData.fema_source === 'FEMA_LIVE' ? { flood_zone: parcelData.fema_flood_zone as string | null } : null,
+      calfire: parcelData.calfire_source === 'CALFIRE_LIVE' ? { fire_hazard_zone: String(parcelData.fire_hazard_zone ?? 'NONE') } : null,
+      census: parcelData.census_source === 'CENSUS_ACS_LIVE' ? {
+        median_income: parcelData.census_median_income as number | null,
+        rent_burden_severe_pct: parcelData.census_rent_burden as number | null,
+        census_tract: parcelData.census_tract as string | null,
+      } : null,
+      hud: parcelData.hud_source === 'HUD_LIVE' ? { opportunity_zone: Boolean(parcelData.opportunity_zone) } : null,
+    },
   }
+  const sourceRegistry = collectSourceRegistry(registryParams)
+  const anyManualReview = sourceRegistry.some(r => r.manual_review_required && r.status === 'NEEDS_HUMAN_REVIEW')
 
   // Skill routing
   const normalizedTier = ['basic', 'full', 'institutional'].includes(tier) ? tier : 'full'
@@ -387,12 +718,7 @@ export async function generateReport(
     skills.push('data-center-intelligence')
   }
 
-  // Run skills in batches of 4 — parallel within each batch, sequential across batches
-  // Keeps GPU memory pressure manageable for large local models
-  const skillResults = await batchedAll(
-    skills.map(name => () => runSkill(name, parcelData, env)),
-    4,
-  )
+  const skillResults = await Promise.all(skills.map(name => runSkill(name, parcelData, env)))
 
   const skillResultMap: Record<string, Record<string, unknown>> = {}
   const skillLogs: SkillLog[] = []
@@ -444,11 +770,12 @@ export async function generateReport(
   }
 
   try {
+    const narrativeModel = normalizedTier === 'institutional' ? 'claude-opus-4-5' : 'claude-haiku-4-5'
     const raw = await callLLM(
       NARRATIVE_PROMPT,
       `Property: ${fullAddress}\nTier: ${normalizedTier}\nSkill Results:\n${JSON.stringify(condensed, null, 2)}\nAssumptions: ${[...new Set(assumptions)].join('; ')}\nUnverified: ${[...new Set(unverified)].join('; ')}`,
       env,
-      'claude-opus-4-5',
+      narrativeModel,
     )
     const parsed = parseJSON(raw, 'narrative')
     // Only accept if key fields are non-empty strings
@@ -468,33 +795,83 @@ export async function generateReport(
   const climateRaw = skillResultMap['climate-adjusted-avm']
   const entitlementRaw = skillResultMap['entitlement-velocity-engine']
 
-  const dp = (val: unknown, conf = 70): DataPoint => ({
+  const retrievedAt = now
+
+  const dp = (val: unknown, conf = 70, status: DataPoint['status'] = 'INFERRED', source?: string): DataPoint => ({
     value: val ?? null,
     confidence: conf,
-    freshness: 'UNVERIFIED',
+    freshness: status === 'VERIFIED' ? 'LA_CITY_LIVE' : 'UNVERIFIED',
+    status,
+    source,
+    retrieved_at: retrievedAt,
   })
 
   const extractDP = (obj: Record<string, unknown> | undefined, key: string): DataPoint => {
-    if (!obj) return dp(null)
+    if (!obj) return dp(null, 0, 'UNAVAILABLE')
     const raw = obj[key] as Record<string, unknown> | undefined
-    if (!raw) return dp(null)
-    return { value: raw.value ?? null, confidence: Number(raw.confidence ?? 70), freshness: String(raw.freshness ?? 'UNVERIFIED') }
+    if (!raw) return dp(null, 0, 'UNAVAILABLE')
+    return {
+      value: raw.value ?? null,
+      confidence: Number(raw.confidence ?? 70),
+      freshness: String(raw.freshness ?? 'UNVERIFIED'),
+      status: (raw.status as DataPoint['status']) ?? 'INFERRED',
+      source: raw.source as string | undefined,
+      source_url: raw.source_url as string | undefined,
+      retrieved_at: raw.retrieved_at as string | undefined ?? retrievedAt,
+    }
   }
 
+  // Phase 1: ZIMAS-sourced fields get VERIFIED status; AI-inferred fields get INFERRED
+  const zimasLive = parcelData.zimas_source === 'LA_CITY_ZIMAS_LIVE'
+  const ladbsLive = parcelData.ladbs_source === 'LADBS_LIVE'
+  const zimasSourceUrl = 'https://maps.lacity.org/lahub/rest/services/City_Planning_Department/MapServer/8'
+  const ladbsSourceUrl = 'https://data.lacity.org/resource/u82d-eh7z.json'
+
+  const verifiedDP = (val: unknown, conf: number, source: string, url: string): DataPoint => ({
+    value: val ?? null,
+    confidence: val != null ? conf : 0,
+    freshness: val != null ? 'LA_CITY_LIVE' : 'UNVERIFIED',
+    status: val != null ? 'VERIFIED' : 'UNAVAILABLE',
+    source,
+    source_url: url,
+    retrieved_at: retrievedAt,
+  })
+
   const zoning: ZoningResult | undefined = zoningRaw ? {
-    zoning_code: extractDP(zoningRaw, 'zoning_code'),
+    // Fields sourced directly from ZIMAS → VERIFIED
+    zoning_code: zimasLive
+      ? verifiedDP(parcelData.zimas_zone_code, 99, 'LA City ZIMAS', zimasSourceUrl)
+      : extractDP(zoningRaw, 'zoning_code'),
+    max_far: zimasLive
+      ? verifiedDP(parcelData.zimas_max_far, 99, 'LA City ZIMAS / LAMC Table 12.21-A-10', zimasSourceUrl)
+      : extractDP(zoningRaw, 'max_far'),
+    height_limit_ft: zimasLive
+      ? verifiedDP(parcelData.zimas_height_limit_ft, 99, 'LA City ZIMAS / LAMC 12.21.1', zimasSourceUrl)
+      : extractDP(zoningRaw, 'height_limit_ft'),
+    // LADBS violations → VERIFIED if live
+    ladbs_violations: ladbsLive
+      ? verifiedDP(parcelData.ladbs_active_violations, 95, 'LADBS Open Violations', ladbsSourceUrl)
+      : extractDP(zoningRaw, 'ladbs_violations'),
+    // AI-inferred fields — entitlement overlays require LAMC + DCP analysis
     permitted_uses: extractDP(zoningRaw, 'permitted_uses'),
-    max_far: extractDP(zoningRaw, 'max_far'),
-    height_limit_ft: extractDP(zoningRaw, 'height_limit_ft'),
-    toc_tier: extractDP(zoningRaw, 'toc_tier'),
+    // Quick win 2 — TOC tier from LA City GIS (VERIFIED when available)
+    toc_tier: parcelData.toc_source === 'LA_CITY_TOC_LIVE'
+      ? verifiedDP(parcelData.toc_in_area ? `Tier ${parcelData.toc_tier} — ${parcelData.toc_tier_label}` : 'Not in TOC area', 99, 'LA City Planning GeoHub — TOC Eligible Areas', String(parcelData.toc_source_url ?? ''))
+      : dp(null, 0, 'UNAVAILABLE'),
     ed1_eligible: extractDP(zoningRaw, 'ed1_eligible'),
     ab2011_eligible: extractDP(zoningRaw, 'ab2011_eligible'),
     rso_covered: extractDP(zoningRaw, 'rso_covered'),
-    ladbs_violations: extractDP(zoningRaw, 'ladbs_violations'),
-    buildable_sf: extractDP(zoningRaw, 'buildable_sf'),
-    max_units_by_right: extractDP(zoningRaw, 'max_units_by_right'),
-    max_units_toc: extractDP(zoningRaw, 'max_units_toc'),
-    confidence_overall: Number(zoningRaw.confidence_overall ?? 70),
+    // Quick win 1 — use calculated values when available; fall back to AI skill
+    buildable_sf: parcelData.buildable_sf_calc != null
+      ? verifiedDP(parcelData.buildable_sf_calc, 95, 'Calculated: ZIMAS FAR × LA County Assessor lot size', 'https://assessor.lacounty.gov')
+      : dp(null, 0, 'UNAVAILABLE'),
+    max_units_by_right: parcelData.max_units_by_right_calc != null
+      ? verifiedDP(parcelData.max_units_by_right_calc, 90, 'Calculated: LAMC Title 12 base density × lot size (architectural analysis required for final count)', 'https://library.municode.com/ca/los_angeles/codes/municipal_code')
+      : dp(null, 0, 'UNAVAILABLE'),
+    max_units_toc: parcelData.max_units_toc_calc != null
+      ? verifiedDP(parcelData.max_units_toc_calc, 88, 'Calculated: by-right units × TOC bonus (LA City Planning GeoHub)', 'https://planning.lacity.gov/plans-policies/initiatives-policies/toc')
+      : dp(null, 0, 'UNAVAILABLE'),
+    confidence_overall: zimasLive ? Math.max(Number(zoningRaw.confidence_overall ?? 70), 85) : Number(zoningRaw.confidence_overall ?? 70),
   } : undefined
 
   const valuation: ValuationResult | undefined = valuationRaw ? {
@@ -524,7 +901,15 @@ export async function generateReport(
     flood_risk_score: extractDP(climateRaw, 'flood_risk_score'),
     wildfire_risk_score: extractDP(climateRaw, 'wildfire_risk_score'),
     heat_risk_score: extractDP(climateRaw, 'heat_risk_score'),
-    seismic_risk_score: extractDP(climateRaw, 'seismic_risk_score'),
+    // Quick win 4 — seismic from USGS (VERIFIED when available)
+    seismic_risk_score: parcelData.seismic_source === 'USGS_SEISMIC_LIVE' && parcelData.seismic_risk_score != null
+      ? verifiedDP(
+          `${parcelData.seismic_risk_label} (Ss=${parcelData.seismic_ss}g${parcelData.seismic_pga != null ? ', PGA=' + parcelData.seismic_pga + 'g' : ''})`,
+          99,
+          'USGS Earthquake Hazards Program — ASCE 7-22 Design Maps',
+          String(parcelData.seismic_source_url ?? ''),
+        )
+      : dp(null, 0, 'UNAVAILABLE'),
     insurance_stress_score: extractDP(climateRaw, 'insurance_stress_score'),
     climate_haircut_pct: extractDP(climateRaw, 'climate_haircut_pct'),
     confidence_overall: Number(climateRaw.confidence_overall ?? 70),
@@ -549,7 +934,7 @@ export async function generateReport(
 
   const generationTime = (Date.now() - start) / 1000
 
-  return {
+  const report: PropertyReport = {
     request_id: requestId,
     address,
     tier: normalizedTier,
@@ -558,7 +943,7 @@ export async function generateReport(
     deal_score: String(narrative.deal_score ?? 'C'),
     deal_score_rationale: String(narrative.deal_score_rationale ?? ''),
     overall_confidence: overallConfidence,
-    data_freshness_summary: 'UNVERIFIED',
+    data_freshness_summary: parcelData.freshness === 'LA_CITY_LIVE' ? 'LA_CITY_LIVE' : 'UNVERIFIED',
     zoning,
     valuation,
     distress,
@@ -575,5 +960,84 @@ export async function generateReport(
     disclaimer:
       'For informational purposes only. Not a licensed appraisal. Not legal advice. ' +
       'Consult a licensed professional before making any real estate or financial decision. © 2026 SevenNova.ai',
+    cache_hit: cacheHit,
+    source_registry: sourceRegistry,
+    manual_review_required: anyManualReview,
   }
+
+  if (env.SEVENNOVA_KEYS) {
+    await env.SEVENNOVA_KEYS.put(reportCacheKey, JSON.stringify({ report, cached_at: Date.now() }))
+  }
+
+  // Phase 5 — Audit trail (fire-and-forget, non-blocking)
+  storeAuditRecord(env, report, userKey, null).catch(() => {})
+
+  // Manual review queue — store any NEEDS_HUMAN_REVIEW sources, 90-day TTL
+  if (env.SEVENNOVA_KEYS && anyManualReview) {
+    const reviewSources = sourceRegistry.filter(r => r.status === 'NEEDS_HUMAN_REVIEW')
+    env.SEVENNOVA_KEYS.put(
+      `review:${requestId}`,
+      JSON.stringify({
+        audit_id: requestId,
+        address: fullAddress,
+        user_key: userKey,
+        timestamp: now,
+        resolved: false,
+        sources: reviewSources.map(r => ({ source_name: r.source_name, notes: r.notes, source_url: r.source_url })),
+      }),
+      { expirationTtl: 86400 * 90 },
+    ).catch(() => {})
+  }
+
+  // Phase 5 — Monthly usage accounting (separate from rate limiting — billing source of truth)
+  if (env.SEVENNOVA_KEYS && userKey !== 'anonymous') {
+    const monthKey = `usage:monthly:${userKey}:${now.slice(0, 7)}` // YYYY-MM
+    env.SEVENNOVA_KEYS.get(monthKey).then(async (raw: string | null) => {
+      const count = raw ? parseInt(raw, 10) : 0
+      await env.SEVENNOVA_KEYS.put(monthKey, String(count + 1), { expirationTtl: 86400 * 35 })
+    }).catch(() => {})
+  }
+
+  // Agent 4: Quality monitor — fire-and-forget, never blocks report return
+  if (env.SEVENNOVA_KEYS && overallConfidence < 40) {
+    const qualityKey = `quality:low:${requestId}`
+    env.SEVENNOVA_KEYS.put(
+      qualityKey,
+      JSON.stringify({
+        request_id: requestId,
+        address: fullAddress,
+        overall_confidence: overallConfidence,
+        skills_failed: skillLogs.filter(l => !l.activated).map(l => l.skill_name),
+        timestamp: now,
+      }),
+    ).catch(() => {})
+
+    // Check if 3+ low-quality reports in the past hour → alert
+    env.SEVENNOVA_KEYS.list({ prefix: 'quality:low:' }).then(async (listed: { keys: Array<{ name: string }> }) => {
+      const oneHourAgo = Date.now() - 60 * 60 * 1000
+      const recentLow: number[] = []
+      for (const key of listed.keys) {
+        const raw = await env.SEVENNOVA_KEYS.get(key.name).catch(() => null) as string | null
+        if (!raw) continue
+        const entry = JSON.parse(raw) as { timestamp?: string }
+        if (entry.timestamp && new Date(entry.timestamp).getTime() > oneHourAgo) {
+          recentLow.push(new Date(entry.timestamp).getTime())
+        }
+      }
+      if (recentLow.length >= 3) {
+        await sendEmail(
+          env,
+          'dan.issak@gmail.com',
+          `[SevenNova] Quality Alert — ${recentLow.length} low-confidence reports in 1 hour`,
+          `<h2>SevenNova Quality Alert</h2>
+<p>${recentLow.length} reports with overall_confidence &lt; 40% in the past hour.</p>
+<p>Latest: <strong>${fullAddress}</strong> — confidence ${overallConfidence}%</p>
+<p>Request ID: ${requestId}</p>
+<p>Check KV keys with prefix <code>quality:low:</code> for details.</p>`,
+        )
+      }
+    }).catch(() => {})
+  }
+
+  return report
 }

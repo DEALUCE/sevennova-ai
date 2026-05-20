@@ -20,13 +20,13 @@ const SKILLS = [
   { id: 'carry-cost-calculator',      label: 'Carry Cost Calc',       desc: 'Monthly holding costs, IRR projections' },
   { id: 'title-lien-scanner',         label: 'Title & Lien Scanner',  desc: 'Mechanics liens, tax liens, encumbrances' },
   { id: 'seismic-retrofit-checker',   label: 'Seismic Retrofit',      desc: 'Soft-story mandates, retrofit costs' },
-  { id: 'investment-thesis-writer',   label: 'Investment Thesis',     desc: 'AI-generated narrative with source citations' },
+  { id: 'investment-thesis-writer',   label: 'Investment Thesis',     desc: 'AI-generated narrative and deal scoring' },
 ];
 
 const PRICING_PREVIEW = [
   { tier: 'basic',       label: 'Basic',       price: '$49',  desc: 'Zoning + Violations + Valuation' },
-  { tier: 'full',        label: 'Full',        price: '$199', desc: 'All 15 skills, full report', featured: true },
-  { tier: 'institutional', label: 'Institutional', price: '$499', desc: 'Full + Comparables + Expert review' },
+  { tier: 'full',        label: 'Full',        price: '$199', desc: 'All 11 skills, full report', featured: true },
+  { tier: 'institutional', label: 'Institutional', price: '$499', desc: 'Full + Comparables + Priority processing' },
 ];
 
 export default function HomePage() {
@@ -81,7 +81,7 @@ export default function HomePage() {
           fontSize: '0.65rem', letterSpacing: '0.14em',
           padding: '4px 12px', marginBottom: 28,
         }}>
-          15 AI SKILLS · &lt;60s LATENCY · INSTITUTIONAL GRADE
+          11 AI SKILLS · ~20s LATENCY · INSTITUTIONAL GRADE
         </div>
 
         <h1 style={{
@@ -95,7 +95,7 @@ export default function HomePage() {
 
         <p style={{ color: '#94a3b8', fontSize: '1rem', maxWidth: 580, margin: '0 auto 48px', lineHeight: 1.75 }}>
           Address in. Full institutional report out in under 60 seconds. Zoning, valuation,
-          distress signals, entitlement pathways, and climate risk — all in one document.
+          distress signals, entitlement pathways, and climate risk — all in ~20 seconds.
         </p>
 
         {/* Address Form */}
@@ -179,7 +179,7 @@ export default function HomePage() {
         </form>
 
         <p style={{ color: '#5a7090', fontSize: '0.7rem', marginTop: 14, letterSpacing: '0.04em' }}>
-          City of Los Angeles · All 35 ZIP codes · LADBS + Assessor + MLS data
+          City of Los Angeles · All 35 ZIP codes · ZIMAS + LADBS + Assessor + FEMA + Census
         </p>
       </section>
 
@@ -187,8 +187,8 @@ export default function HomePage() {
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)', padding: '28px 24px' }}>
         <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: 24 }}>
           {[
-            { val: '15',   label: 'AI Skills' },
-            { val: '<60s', label: 'Report Time' },
+            { val: '11',   label: 'AI Skills' },
+            { val: '~20s', label: 'Report Time' },
             { val: '$49',  label: 'Starting Price' },
             { val: '100%', label: 'LA Coverage' },
           ].map(s => (
@@ -205,7 +205,7 @@ export default function HomePage() {
         <div style={{ textAlign: 'center', marginBottom: 40 }}>
           <p style={{ fontSize: '0.65rem', letterSpacing: '0.14em', color: '#5a7090', textTransform: 'uppercase', marginBottom: 10 }}>Platform</p>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8', textTransform: 'uppercase' }}>
-            15 Specialized AI Skills
+            11 Specialized AI Skills
           </h2>
           <div style={{ width: 40, height: 1, background: '#00d4ff', margin: '14px auto 0' }} />
         </div>
