@@ -1,6 +1,13 @@
 /**
- * PHASE 0 — Lender-grade PDF report generator
- * Uses pdf-lib (pure JS, Cloudflare Workers compatible — no Node.js streams)
+ * PHASE 2 — SevenNova RiskCore Evidence Pack
+ * Lender-grade PDF using pdf-lib (pure JS, Cloudflare Workers compatible)
+ *
+ * PHASE 0 RULE: Only VERIFIED fields appear in the main data tables.
+ * INFERRED fields are quarantined to a separate "AI Estimates" section clearly
+ * labeled as unverified. UNAVAILABLE fields are shown with status badge only.
+ * No fake confidence scores. No "institutional-grade" language without evidence.
+ *
+ * Styling reference: CoStar / ATTOM appraisal report hierarchy
  */
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from 'pdf-lib'
 import type { PropertyReport, DataPoint } from './orchestrator'
@@ -10,26 +17,56 @@ const PAGE_H = 792
 const MARGIN = 50
 const CONTENT_W = PAGE_W - MARGIN * 2
 
-// Colors
-const C_BLACK  = rgb(0.08, 0.08, 0.08)
-const C_DARK   = rgb(0.15, 0.15, 0.15)
-const C_GRAY   = rgb(0.45, 0.45, 0.45)
-const C_CYAN   = rgb(0.00, 0.65, 0.82)
-const C_GREEN  = rgb(0.10, 0.62, 0.35)
-const C_RED    = rgb(0.80, 0.15, 0.15)
-const C_AMBER  = rgb(0.80, 0.50, 0.05)
+// ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
+const C_NAVY   = rgb(0.04, 0.09, 0.18)
+const C_DARK   = rgb(0.12, 0.14, 0.18)
+const C_MED    = rgb(0.30, 0.33, 0.38)
+const C_GRAY   = rgb(0.52, 0.54, 0.58)
+const C_LGRAY  = rgb(0.88, 0.89, 0.91)
+const C_CYAN   = rgb(0.00, 0.55, 0.75)
+const C_GREEN  = rgb(0.08, 0.55, 0.30)
+const C_RED    = rgb(0.76, 0.12, 0.12)
+const C_AMBER  = rgb(0.75, 0.44, 0.02)
 const C_WHITE  = rgb(1.00, 1.00, 1.00)
 const C_BG     = rgb(0.96, 0.97, 0.98)
+const C_BG2    = rgb(0.92, 0.94, 0.97)
 
 function statusColor(status?: string) {
   switch (status) {
-    case 'VERIFIED': return C_GREEN
-    case 'UNAVAILABLE': return C_RED
+    case 'VERIFIED':           return C_GREEN
+    case 'UNAVAILABLE':        return C_RED
     case 'NEEDS_HUMAN_REVIEW': return C_AMBER
-    default: return C_GRAY  // INFERRED or unknown
+    case 'INFERRED':           return C_AMBER
+    default:                   return C_GRAY
   }
 }
 
+function statusBadgeText(status?: string): string {
+  switch (status) {
+    case 'VERIFIED':           return 'VERIFIED'
+    case 'UNAVAILABLE':        return 'UNAVAILABLE'
+    case 'NEEDS_HUMAN_REVIEW': return 'NEEDS REVIEW'
+    case 'INFERRED':           return 'AI ESTIMATE'
+    default:                   return 'UNVERIFIED'
+  }
+}
+
+// ── PHASE 0 SUPPRESSION ───────────────────────────────────────────────────────
+// Returns true if field should appear in the VERIFIED main table.
+// INFERRED fields are quarantined to AI Estimates section.
+function isVerifiedOrUnavailable(dp: DataPoint | undefined): boolean {
+  if (!dp) return false
+  const s = (dp as unknown as Record<string, unknown>).status as string | undefined
+  return s === 'VERIFIED' || s === 'UNAVAILABLE'
+}
+
+function isInferred(dp: DataPoint | undefined): boolean {
+  if (!dp) return false
+  const s = (dp as unknown as Record<string, unknown>).status as string | undefined
+  return !s || s === 'INFERRED' || s === 'UNVERIFIED'
+}
+
+// ── TEXT UTILITIES ─────────────────────────────────────────────────────────────
 function wrapText(text: string, font: PDFFont, size: number, maxW: number): string[] {
   const words = String(text ?? '').split(/\s+/)
   const lines: string[] = []
@@ -47,6 +84,12 @@ function wrapText(text: string, font: PDFFont, size: number, maxW: number): stri
   return lines.length ? lines : ['']
 }
 
+function safeStr(v: unknown, max = 80): string {
+  if (v == null) return '-'
+  return String(v).slice(0, max)
+}
+
+// ── WRITER CLASS ──────────────────────────────────────────────────────────────
 class Writer {
   doc: PDFDocument
   page!: PDFPage
@@ -54,34 +97,24 @@ class Writer {
   reg: PDFFont
   bold: PDFFont
   mono: PDFFont
+  pageNum = 0
 
   constructor(doc: PDFDocument, reg: PDFFont, bold: PDFFont, mono: PDFFont) {
-    this.doc = doc
-    this.reg = reg
-    this.bold = bold
-    this.mono = mono
+    this.doc = doc; this.reg = reg; this.bold = bold; this.mono = mono
     this.newPage()
   }
 
   newPage() {
     this.page = this.doc.addPage([PAGE_W, PAGE_H])
     this.y = PAGE_H - MARGIN
+    this.pageNum++
   }
 
   ensure(needed: number) {
-    if (this.y - needed < MARGIN + 20) this.newPage()
+    if (this.y - needed < MARGIN + 30) this.newPage()
   }
 
-  text(
-    str: string,
-    opts: {
-      size?: number
-      font?: PDFFont
-      color?: ReturnType<typeof rgb>
-      indent?: number
-      maxW?: number
-    } = {},
-  ) {
+  text(str: string, opts: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; maxW?: number } = {}) {
     const { size = 10, font = this.reg, color = C_DARK, indent = 0, maxW = CONTENT_W - indent } = opts
     const lines = wrapText(str, font, size, maxW)
     const lineH = size * 1.55
@@ -92,374 +125,493 @@ class Writer {
     }
   }
 
-  heading(str: string, size = 14) {
-    this.ensure(size * 2 + 12)
-    this.y -= 6
-    this.text(str, { size, font: this.bold, color: C_CYAN })
-    this.hline()
+  // Section heading with colored left bar
+  heading(str: string) {
+    this.ensure(28)
+    this.y -= 8
+    this.page.drawRectangle({ x: MARGIN, y: this.y - 2, width: 3, height: 18, color: C_CYAN })
+    this.page.drawText(str.toUpperCase(), { x: MARGIN + 10, y: this.y, size: 10, font: this.bold, color: C_NAVY })
+    this.y -= 14
+    this.page.drawLine({ start: { x: MARGIN, y: this.y }, end: { x: MARGIN + CONTENT_W, y: this.y }, thickness: 0.5, color: C_LGRAY })
+    this.y -= 8
   }
 
   subheading(str: string) {
-    this.ensure(22)
+    this.ensure(20)
     this.y -= 4
-    this.text(str, { size: 11, font: this.bold, color: C_BLACK })
-  }
-
-  hline(color = C_BG, thick = 1) {
-    this.ensure(6)
-    this.page.drawLine({
-      start: { x: MARGIN, y: this.y + 2 },
-      end: { x: MARGIN + CONTENT_W, y: this.y + 2 },
-      thickness: thick,
-      color,
-    })
-    this.y -= 6
+    this.page.drawText(str, { x: MARGIN, y: this.y, size: 9.5, font: this.bold, color: C_DARK })
+    this.y -= 15
   }
 
   gap(n = 8) { this.y -= n }
 
-  /**
-   * Data row: label | value | status badge | source
-   */
-  dataRow(label: string, dp: DataPoint | null | undefined, indent = 0) {
-    if (!dp) return
-    const val = dp.value == null ? '—' : String(dp.value)
-    const dpAny = dp as unknown as Record<string, unknown>
-    const status = dpAny.status as string | undefined ?? 'INFERRED'
-    const source = dpAny.source as string | undefined ?? ''
-    const conf = dp.confidence ?? 0
+  hline(color = C_LGRAY) {
+    this.ensure(6)
+    this.page.drawLine({ start: { x: MARGIN, y: this.y }, end: { x: MARGIN + CONTENT_W, y: this.y }, thickness: 0.4, color })
+    this.y -= 6
+  }
 
+  // Column headers for data tables
+  tableHeader(cols: string[], xs: number[]) {
     this.ensure(18)
-
-    // Label
-    this.page.drawText(label.slice(0, 30), {
-      x: MARGIN + indent, y: this.y, size: 9, font: this.bold, color: C_DARK,
-    })
-    // Value
-    this.page.drawText(val.slice(0, 45), {
-      x: MARGIN + indent + 165, y: this.y, size: 9, font: this.reg, color: C_DARK,
-    })
-    // Status badge
-    const badgeX = MARGIN + indent + 340
-    this.page.drawRectangle({
-      x: badgeX - 2, y: this.y - 2, width: 88, height: 12,
-      color: statusColor(status), opacity: 0.12,
-    })
-    this.page.drawText(status.slice(0, 16), {
-      x: badgeX, y: this.y, size: 7.5, font: this.bold, color: statusColor(status),
-    })
-    // Confidence
-    this.page.drawText(`${conf}%`, {
-      x: MARGIN + indent + 436, y: this.y, size: 8, font: this.mono, color: C_GRAY,
-    })
-    // Source
-    this.page.drawText(source.slice(0, 28), {
-      x: MARGIN + indent + 460, y: this.y, size: 7, font: this.mono, color: C_GRAY,
-    })
-
+    this.page.drawRectangle({ x: MARGIN, y: this.y - 3, width: CONTENT_W, height: 15, color: C_BG2 })
+    for (let i = 0; i < cols.length; i++) {
+      this.page.drawText(cols[i], { x: MARGIN + xs[i], y: this.y, size: 7.5, font: this.bold, color: C_MED })
+    }
     this.y -= 16
   }
 
-  /**
-   * Column headers for data rows
-   */
-  dataHeader() {
-    this.ensure(18)
-    const cols = ['Field', 'Value', 'Status', 'Conf', 'Source']
-    const xs = [0, 165, 340, 436, 460]
-    for (let i = 0; i < cols.length; i++) {
-      this.page.drawText(cols[i], {
-        x: MARGIN + xs[i], y: this.y, size: 8, font: this.bold, color: C_GRAY,
-      })
+  // Data row: field | value | status badge | confidence | source
+  dataRow(label: string, dp: DataPoint | null | undefined) {
+    if (!dp) return
+    const dpAny = dp as unknown as Record<string, unknown>
+    const val    = dp.value == null ? '-' : String(dp.value).slice(0, 50)
+    const status = dpAny.status as string | undefined ?? 'INFERRED'
+    const source = dpAny.source as string | undefined ?? ''
+    const conf   = dp.confidence ?? 0
+    const col    = statusColor(status)
+    const badge  = statusBadgeText(status)
+
+    this.ensure(16)
+
+    // Alternating row bg
+    if (this.pageNum % 2 === 0) {
+      this.page.drawRectangle({ x: MARGIN, y: this.y - 3, width: CONTENT_W, height: 14, color: rgb(0.975, 0.977, 0.980), opacity: 0.5 })
     }
-    this.y -= 14
-    this.hline(C_BG, 0.5)
+
+    this.page.drawText(label.slice(0, 28), { x: MARGIN + 2, y: this.y, size: 8.5, font: this.bold, color: C_DARK })
+    this.page.drawText(val, { x: MARGIN + 158, y: this.y, size: 8.5, font: this.reg, color: C_DARK })
+
+    // Status badge
+    const bw = 70
+    this.page.drawRectangle({ x: MARGIN + 336, y: this.y - 2, width: bw, height: 11, color: col, opacity: 0.12 })
+    this.page.drawRectangle({ x: MARGIN + 336, y: this.y - 2, width: bw, height: 11, borderColor: col, borderWidth: 0.5, opacity: 0 })
+    this.page.drawText(badge, { x: MARGIN + 338, y: this.y, size: 7, font: this.bold, color: col })
+
+    // Confidence
+    this.page.drawText(`${conf}%`, { x: MARGIN + 414, y: this.y, size: 7.5, font: this.mono, color: C_GRAY })
+
+    // Source (truncated)
+    this.page.drawText(source.slice(0, 30), { x: MARGIN + 440, y: this.y, size: 6.5, font: this.mono, color: C_GRAY })
+
+    this.y -= 15
   }
 
-  flagRow(flag: string) {
-    this.ensure(16)
-    this.page.drawText('!', { x: MARGIN, y: this.y, size: 9, font: this.bold, color: C_RED })
-    this.text(flag, { indent: 14, size: 9, color: C_DARK, maxW: CONTENT_W - 14 })
+  flagRow(flag: string, severity: 'HIGH' | 'MEDIUM' | 'INFO' = 'HIGH') {
+    const col = severity === 'HIGH' ? C_RED : severity === 'MEDIUM' ? C_AMBER : C_GRAY
+    this.ensure(18)
+    this.page.drawRectangle({ x: MARGIN, y: this.y - 3, width: 3, height: 13, color: col })
+    this.text(flag, { indent: 8, size: 8.5, color: C_DARK, maxW: CONTENT_W - 8 })
   }
 
   bullet(str: string, indent = 10) {
-    this.ensure(16)
-    this.page.drawText('-', { x: MARGIN + indent - 10, y: this.y, size: 9, font: this.reg, color: C_CYAN })
+    this.ensure(15)
+    this.page.drawText('-', { x: MARGIN + indent - 8, y: this.y, size: 9, font: this.reg, color: C_CYAN })
     this.text(str, { indent, size: 9, color: C_DARK, maxW: CONTENT_W - indent })
+  }
+
+  // Key-value pair for cover / summary info
+  kv(label: string, value: string, valueColor = C_DARK) {
+    this.ensure(16)
+    this.page.drawText(label + ':', { x: MARGIN, y: this.y, size: 9, font: this.bold, color: C_GRAY })
+    this.page.drawText(safeStr(value, 90), { x: MARGIN + 130, y: this.y, size: 9, font: this.reg, color: valueColor })
+    this.y -= 15
   }
 }
 
-export async function generatePDFReport(report: PropertyReport, userKey?: string): Promise<Uint8Array> {
-  const doc = await PDFDocument.create()
+// ── STREET VIEW FETCH (Phase 2 — optional, requires GOOGLE_MAPS_API_KEY) ──────
+async function fetchStreetView(address: string, apiKey: string): Promise<Uint8Array | null> {
+  // BLOCKER: Requires GOOGLE_MAPS_API_KEY secret. Set via: wrangler secret put GOOGLE_MAPS_API_KEY
+  // Free tier: 28,000 requests/month. Falls back gracefully if not set.
+  try {
+    const url = `https://maps.googleapis.com/maps/api/streetview?size=500x220&location=${encodeURIComponent(address)}&fov=80&pitch=0&key=${apiKey}`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const ct = res.headers.get('content-type') ?? ''
+    if (!ct.includes('image')) return null
+    return new Uint8Array(await res.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+// ── MAIN EXPORT ───────────────────────────────────────────────────────────────
+export async function generatePDFReport(
+  report: PropertyReport,
+  userKey?: string,
+  googleMapsApiKey?: string,
+): Promise<Uint8Array> {
+  const doc  = await PDFDocument.create()
   const reg  = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const mono = await doc.embedFont(StandardFonts.Courier)
-
   const w = new Writer(doc, reg, bold, mono)
 
-  // ── COVER PAGE ─────────────────────────────────────────────────────────────
-  // Dark header bar
-  w.page.drawRectangle({ x: 0, y: PAGE_H - 130, width: PAGE_W, height: 130, color: rgb(0.04, 0.08, 0.12) })
-  w.page.drawText('SevenNova.ai', { x: MARGIN, y: PAGE_H - 50, size: 22, font: bold, color: C_CYAN })
-  w.page.drawText('Verified Los Angeles Zoning & Entitlement Intelligence', {
-    x: MARGIN, y: PAGE_H - 72, size: 11, font: reg, color: C_WHITE,
-  })
-  w.page.drawText('LENDER-GRADE PROPERTY REPORT', {
-    x: MARGIN, y: PAGE_H - 92, size: 9, font: bold, color: rgb(0.70, 0.72, 0.75),
-  })
-  w.y = PAGE_H - 155
-
-  w.gap(20)
-  w.text(report.address.full_address, { size: 16, font: bold, color: C_BLACK })
-  w.gap(6)
-
-  const meta: [string, string][] = [
-    ['Report Tier',   report.tier.toUpperCase()],
-    ['Deal Score',    `${report.deal_score} — ${report.deal_score_rationale}`],
-    ['Confidence',   `${report.overall_confidence}%`],
-    ['Generated',    report.generated_at],
-    ['Audit ID',     report.request_id],
-    ['Data Status',  report.data_freshness_summary],
-  ]
-  if (userKey) meta.push(['API Key', `${userKey.slice(0, 12)}…`])
-
-  for (const [k, v] of meta) {
-    w.ensure(16)
-    w.page.drawText(k + ':', { x: MARGIN, y: w.y, size: 10, font: bold, color: C_GRAY })
-    w.page.drawText(String(v).slice(0, 80), { x: MARGIN + 120, y: w.y, size: 10, font: reg, color: C_DARK })
-    w.y -= 16
+  // Try Street View image
+  let streetViewImg = null
+  if (googleMapsApiKey) {
+    const bytes = await fetchStreetView(report.address.full_address, googleMapsApiKey).catch(() => null)
+    if (bytes) {
+      try { streetViewImg = await doc.embedJpg(bytes) } catch { streetViewImg = null }
+    }
   }
 
-  w.gap(16)
-  w.hline(rgb(0.82, 0.85, 0.88), 0.5)
+  // ── COVER PAGE ──────────────────────────────────────────────────────────────
+  // Navy header band
+  w.page.drawRectangle({ x: 0, y: PAGE_H - 110, width: PAGE_W, height: 110, color: C_NAVY })
+  w.page.drawText('SevenNova', { x: MARGIN, y: PAGE_H - 42, size: 20, font: bold, color: C_CYAN })
+  w.page.drawText('RiskCore', { x: MARGIN + 118, y: PAGE_H - 42, size: 20, font: bold, color: C_WHITE })
+  w.page.drawText('Verified Los Angeles Property Risk & Zoning Evidence Pack', {
+    x: MARGIN, y: PAGE_H - 62, size: 10, font: reg, color: rgb(0.75, 0.78, 0.82),
+  })
+  w.page.drawText('FOR LENDERS, DEVELOPERS, AND ACQUISITION TEAMS — NOT A LICENSED APPRAISAL', {
+    x: MARGIN, y: PAGE_H - 78, size: 7.5, font: bold, color: rgb(0.55, 0.58, 0.62),
+  })
+  // Cyan accent line
+  w.page.drawRectangle({ x: 0, y: PAGE_H - 115, width: PAGE_W, height: 5, color: C_CYAN })
+
+  w.y = PAGE_H - 135
+
+  // Street View or placeholder
+  if (streetViewImg) {
+    w.page.drawImage(streetViewImg, { x: MARGIN, y: w.y - 120, width: 260, height: 115 })
+    // Property info beside image
+    const ix = MARGIN + 275
+    w.page.drawText('SUBJECT PROPERTY', { x: ix, y: w.y, size: 7.5, font: bold, color: C_GRAY })
+    w.page.drawText(report.address.street, { x: ix, y: w.y - 14, size: 11, font: bold, color: C_DARK })
+    w.page.drawText(`${report.address.city}, ${report.address.state}${report.address.zip_code ? ' ' + report.address.zip_code : ''}`, { x: ix, y: w.y - 26, size: 9, font: reg, color: C_MED })
+    if (report.address.apn) w.page.drawText(`APN: ${report.address.apn}`, { x: ix, y: w.y - 38, size: 8.5, font: mono, color: C_MED })
+    w.y -= 130
+  } else {
+    // No Street View — show address prominently
+    w.gap(12)
+    w.page.drawText('SUBJECT PROPERTY', { x: MARGIN, y: w.y, size: 7.5, font: bold, color: C_GRAY })
+    w.y -= 14
+    w.page.drawText(report.address.street, { x: MARGIN, y: w.y, size: 16, font: bold, color: C_DARK })
+    w.y -= 20
+    w.page.drawText(`${report.address.city}, ${report.address.state}${report.address.zip_code ? ' ' + report.address.zip_code : ''}`, {
+      x: MARGIN, y: w.y, size: 11, font: reg, color: C_MED,
+    })
+    w.y -= 15
+    if (report.address.apn) {
+      w.page.drawText(`APN: ${report.address.apn}`, { x: MARGIN, y: w.y, size: 9, font: mono, color: C_MED })
+      w.y -= 14
+    }
+    // BLOCKER note for Street View
+    w.page.drawText('[ Property photo: set GOOGLE_MAPS_API_KEY secret to enable ]', {
+      x: MARGIN, y: w.y, size: 7.5, font: reg, color: C_GRAY,
+    })
+    w.y -= 18
+  }
+
+  w.gap(14)
+  w.hline()
+
+  // Report metadata grid
+  const dealCol = report.deal_score === 'A' ? C_GREEN : report.deal_score === 'B' ? C_CYAN : report.deal_score >= 'D' ? C_RED : C_AMBER
+  w.kv('Report Tier',     report.tier.toUpperCase())
+  w.kv('Deal Score',      `${report.deal_score}  —  ${report.deal_score_rationale}`, dealCol)
+  w.kv('Data Confidence', `${report.overall_confidence}%  ${report.overall_confidence < 50 ? '(LOW — see Human Review flags)' : ''}`,
+    report.overall_confidence < 50 ? C_RED : C_GREEN)
+  w.kv('Data Status',     report.data_freshness_summary)
+  w.kv('Generated',       report.generated_at)
+  w.kv('Audit ID',        report.request_id)
+  if (userKey) w.kv('API Key', `${userKey.slice(0, 16)}...`)
+
+  w.gap(14)
+
+  // Cover disclaimer box
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: CONTENT_W, height: 60, color: C_BG2 })
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: 3, height: 60, color: C_AMBER })
+  w.y -= 6
+  w.text('DATA PROVENANCE STATEMENT', { size: 8, font: bold, color: C_AMBER, indent: 8 })
+  w.text(
+    'Fields marked VERIFIED are sourced from live public-record APIs (ZIMAS, LADBS, FEMA, USGS, CalFire, Census, HUD). ' +
+    'Fields marked AI ESTIMATE are model-generated and have NOT been verified against a primary source. ' +
+    'AI estimates are shown in a separate section and must not be used as sole basis for lending or investment decisions. ' +
+    'This report is not a licensed appraisal and is not legal advice.',
+    { size: 7.5, color: C_DARK, indent: 8, maxW: CONTENT_W - 16 },
+  )
+
+  // ── PAGE 2 — VERIFIED DATA SUMMARY ────────────────────────────────────────
+  w.newPage()
+  w.heading('Verified Data Summary — Public Record Sources Only')
+  w.text(
+    'All fields in this section are sourced from verified public-record APIs. ' +
+    'UNAVAILABLE means the source query failed or returned no data for this address — not that the condition does not exist.',
+    { size: 8.5, color: C_MED },
+  )
+  w.gap(8)
+
+  function emitVerifiedSection(sectionTitle: string, obj: Record<string, unknown> | undefined) {
+    if (!obj) return
+    const rows = Object.entries(obj).filter(([k, v]) => {
+      if (k === 'confidence_overall') return false
+      if (!v || typeof v !== 'object' || !('value' in v)) return false
+      return isVerifiedOrUnavailable(v as DataPoint)
+    })
+    if (!rows.length) return
+    w.subheading(sectionTitle)
+    w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
+    for (const [k, v] of rows) {
+      w.dataRow(k.replace(/_/g, ' '), v as DataPoint)
+    }
+    w.gap(6)
+  }
+
+  emitVerifiedSection('Zoning (LA City ZIMAS)', report.zoning as unknown as Record<string, unknown>)
+  emitVerifiedSection('Climate & Hazard Risk', report.climate as unknown as Record<string, unknown>)
+  emitVerifiedSection('Distress Indicators', report.distress as unknown as Record<string, unknown>)
+  emitVerifiedSection('Entitlement', report.entitlement as unknown as Record<string, unknown>)
+  emitVerifiedSection('Valuation Inputs', report.valuation as unknown as Record<string, unknown>)
+
+  // ── ZONING DETAIL ─────────────────────────────────────────────────────────
+  if (report.zoning) {
+    w.heading('Zoning & Entitlement Detail')
+    const z = report.zoning
+    const rows: [string, DataPoint | undefined][] = [
+      ['Zoning Code',         z.zoning_code],
+      ['Max FAR',             z.max_far],
+      ['Height Limit (ft)',   z.height_limit_ft],
+      ['TOC Tier',            z.toc_tier],
+      ['Buildable SF',        z.buildable_sf],
+      ['Max Units (by-right)',z.max_units_by_right],
+      ['Max Units (TOC)',     z.max_units_toc],
+      ['LADBS Violations',    z.ladbs_violations],
+      ['RSO Covered',         z.rso_covered],
+      ['Permitted Uses',      z.permitted_uses],
+    ]
+    w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
+    for (const [label, dp] of rows) w.dataRow(label, dp)
+    w.gap(6)
+    w.text(`Overall Zoning Confidence: ${z.confidence_overall}%`, { size: 8, color: C_GRAY })
+    w.gap(8)
+  }
+
+  // ── LADBS PERMITS & VIOLATIONS ────────────────────────────────────────────
+  w.heading('LADBS Permits & Code Violations')
+  w.text('Source: City of Los Angeles Department of Building & Safety (data.lacity.org). Public records.', { size: 8, color: C_GRAY })
+  w.gap(6)
+  if (report.zoning?.ladbs_violations) {
+    w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
+    w.dataRow('Active Violations', report.zoning.ladbs_violations)
+    if (report.distress?.ladbs_order_active) w.dataRow('LADBS Order Active', report.distress.ladbs_order_active)
+  } else {
+    w.text('LADBS data: UNAVAILABLE — verify directly at data.lacity.org', { size: 8.5, color: C_AMBER })
+  }
   w.gap(10)
 
-  // Disclaimer box on cover
-  w.page.drawRectangle({ x: MARGIN, y: w.y - 44, width: CONTENT_W, height: 52, color: C_BG })
-  w.y -= 4
-  w.text('IMPORTANT NOTICE — DATA PROVENANCE', { size: 8, font: bold, color: C_AMBER, indent: 6 })
-  w.text(
-    'Verified public-record data (ZIMAS, LADBS, FEMA, CalFire, Census) is labelled VERIFIED. ' +
-    'AI-interpreted fields are labelled INFERRED. Missing data is labelled UNAVAILABLE. ' +
-    'This report is not a licensed appraisal and is not legal advice.',
-    { size: 7.5, color: C_DARK, indent: 6, maxW: CONTENT_W - 12 },
-  )
-  w.gap(8)
-
-  // ── EXECUTIVE SUMMARY ──────────────────────────────────────────────────────
-  w.newPage()
-  w.heading('Executive Summary')
-  w.gap(4)
-  w.text(report.executive_summary || '[No summary generated]', { size: 10 })
-  w.gap(8)
-
-  if (report.investment_thesis) {
-    w.subheading('Investment Thesis')
-    w.text(report.investment_thesis, { size: 10 })
-    w.gap(6)
-  }
-
-  if (report.risk_summary) {
-    w.subheading('Risk Summary')
-    w.text(report.risk_summary, { size: 10 })
-    w.gap(6)
-  }
-
-  if (report.strategic_recommendations?.length) {
-    w.subheading('Strategic Recommendations')
-    for (const rec of report.strategic_recommendations) {
-      w.bullet(rec)
-    }
-    w.gap(6)
-  }
-
-  // ── VERIFIED DATA TABLE ────────────────────────────────────────────────────
-  w.heading('Verified Data — All Fields')
-  w.text(
-    'Every field below includes its source, retrieval status, and confidence score. ' +
-    'VERIFIED = confirmed public-record API. INFERRED = AI interpretation. UNAVAILABLE = source returned no data.',
-    { size: 9, color: C_GRAY },
-  )
-  w.gap(8)
-  w.dataHeader()
-
-  // Helper to emit all DataPoint fields from a typed object
-  function emitSection(label: string, obj: Record<string, unknown> | undefined) {
-    if (!obj) return
-    w.subheading(label)
-    for (const [k, v] of Object.entries(obj)) {
-      if (k === 'confidence_overall') continue
-      if (v && typeof v === 'object' && 'value' in v) {
-        w.dataRow(k.replace(/_/g, ' '), v as DataPoint)
-      }
-    }
-    w.gap(6)
-  }
-
-  emitSection('Zoning', report.zoning as unknown as Record<string, unknown>)
-  emitSection('Valuation', report.valuation as unknown as Record<string, unknown>)
-  emitSection('Climate Risk', report.climate as unknown as Record<string, unknown>)
-  emitSection('Distress Analysis', report.distress as unknown as Record<string, unknown>)
-  emitSection('Entitlement', report.entitlement as unknown as Record<string, unknown>)
-
-  // ── ZONING SECTION ─────────────────────────────────────────────────────────
-  if (report.zoning) {
-    w.heading('Zoning & Entitlement Details')
-    const z = report.zoning
-    const zoningRows: [string, DataPoint | undefined][] = [
-      ['Zoning Code',        z.zoning_code],
-      ['Permitted Uses',     z.permitted_uses],
-      ['Max FAR',            z.max_far],
-      ['Height Limit (ft)',  z.height_limit_ft],
-      ['TOC Tier',           z.toc_tier],
-      ['ED1 Eligible',       z.ed1_eligible],
-      ['AB2011 Eligible',    z.ab2011_eligible],
-      ['RSO Covered',        z.rso_covered],
-      ['Max Units By-Right', z.max_units_by_right],
-      ['Max Units TOC',      z.max_units_toc],
-      ['Buildable SF',       z.buildable_sf],
+  // ── HAZARD & CLIMATE ──────────────────────────────────────────────────────
+  if (report.climate) {
+    w.heading('Hazard & Climate Risk')
+    const c = report.climate
+    const rows: [string, DataPoint | undefined][] = [
+      ['Flood Zone (FEMA)',   c.flood_risk_score],
+      ['Fire Hazard Zone',    c.wildfire_risk_score],
+      ['Seismic Risk (USGS)', c.seismic_risk_score],
+      ['Heat Risk',           c.heat_risk_score],
+      ['Insurance Stress',    c.insurance_stress_score],
+      ['Climate Haircut %',   c.climate_haircut_pct],
     ]
-    w.dataHeader()
-    for (const [label, dp] of zoningRows) {
-      w.dataRow(label, dp)
-    }
+    w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
+    for (const [label, dp] of rows) w.dataRow(label, dp)
     w.gap(8)
-    w.text(`Overall Zoning Confidence: ${z.confidence_overall ?? '—'}%`, { size: 9, color: C_GRAY })
-    w.gap(6)
   }
 
-  // ── LADBS PERMITS & VIOLATIONS ─────────────────────────────────────────────
-  w.heading('LADBS Permits & Violations')
-  w.text(
-    'Source: City of Los Angeles Building & Safety (data.lacity.org). ' +
-    'Permit and violation counts reflect public records at time of query.',
-    { size: 9, color: C_GRAY },
-  )
-  w.gap(6)
-
-  if (report.zoning?.ladbs_violations) {
-    w.dataHeader()
-    w.dataRow('LADBS Active Violations', report.zoning.ladbs_violations)
-    w.gap(4)
-  } else {
-    w.text('LADBS data: UNAVAILABLE — check data.lacity.org directly.', { size: 9, color: C_AMBER })
-    w.gap(4)
-  }
-
-  if (report.distress?.ladbs_order_active) {
-    w.dataRow('LADBS Order Active', report.distress.ladbs_order_active)
-  }
-  w.gap(8)
-
-  // ── ENTITLEMENT SCREENING ──────────────────────────────────────────────────
+  // ── ENTITLEMENT SCREENING ─────────────────────────────────────────────────
   if (report.entitlement) {
     w.heading('Entitlement Screening')
     const e = report.entitlement
     const rows: [string, DataPoint | undefined][] = [
-      ['Best Pathway',        e.best_pathway],
-      ['Approval Probability',e.approval_probability],
-      ['Timeline (months)',   e.timeline_months],
-      ['IRR Impact (%)',      e.irr_impact_pct],
-      ['Carry Cost/Month',    e.carry_cost_monthly],
-      ['Jurisdiction Risk',   e.jurisdiction_risk],
+      ['Best Pathway',         e.best_pathway],
+      ['Approval Probability', e.approval_probability],
+      ['Timeline (months)',    e.timeline_months],
+      ['Jurisdiction Risk',    e.jurisdiction_risk],
     ]
-    w.dataHeader()
+    w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
     for (const [label, dp] of rows) w.dataRow(label, dp)
+    w.gap(4)
+    // Suppress IRR and carry cost unless VERIFIED
+    if (!isInferred(e.irr_impact_pct) && !isInferred(e.carry_cost_monthly)) {
+      w.dataRow('IRR Impact %', e.irr_impact_pct)
+      w.dataRow('Carry Cost/Month', e.carry_cost_monthly)
+    } else {
+      w.text('IRR impact and carry cost: suppressed — not verified against primary source. (Phase 0 rule)', { size: 7.5, color: C_GRAY })
+    }
+    w.gap(8)
+  }
+
+  // ── EXECUTIVE SUMMARY ─────────────────────────────────────────────────────
+  w.heading('Executive Summary')
+  w.text(report.executive_summary || '[No summary generated]', { size: 9.5 })
+  w.gap(8)
+  if (report.investment_thesis) {
+    w.subheading('Investment Thesis')
+    w.text(report.investment_thesis, { size: 9.5 })
+    w.gap(6)
+  }
+  if (report.risk_summary) {
+    w.subheading('Risk Summary')
+    w.text(report.risk_summary, { size: 9.5 })
+    w.gap(6)
+  }
+  if (report.strategic_recommendations?.length) {
+    w.subheading('Strategic Recommendations')
+    for (const rec of report.strategic_recommendations) w.bullet(rec)
     w.gap(6)
   }
 
-  // ── RISK FLAGS ─────────────────────────────────────────────────────────────
-  w.heading('Risk Flags')
-  if (!report.red_flags?.length) {
-    w.text('No critical risk flags identified.', { size: 9, color: C_GREEN })
-  } else {
-    for (const flag of report.red_flags) {
-      w.flagRow(flag)
-    }
-  }
+  // ── HUMAN REVIEW FLAGS ────────────────────────────────────────────────────
+  w.heading('Human Review Required')
+  w.text(
+    'The following items could not be verified from public-record sources and require manual verification before any lending or acquisition decision.',
+    { size: 8.5, color: C_MED },
+  )
   w.gap(6)
 
-  // Assumptions
-  if (report.assumptions?.length) {
-    w.subheading('Assumptions & Caveats')
-    for (const a of report.assumptions) w.bullet(a)
-    w.gap(6)
+  const humanReviewItems: string[] = []
+  // Add flags from report
+  for (const flag of report.red_flags ?? []) humanReviewItems.push(flag)
+  // Add UNAVAILABLE fields
+  const allSections = [
+    ['Zoning', report.zoning],
+    ['Climate', report.climate],
+    ['Distress', report.distress],
+    ['Entitlement', report.entitlement],
+    ['Valuation', report.valuation],
+  ] as const
+  for (const [sec, obj] of allSections) {
+    if (!obj) continue
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === 'confidence_overall') continue
+      if (!v || typeof v !== 'object' || !('value' in v)) continue
+      const dp = v as DataPoint
+      const dpAny = dp as unknown as Record<string, unknown>
+      if (dpAny.status === 'UNAVAILABLE') {
+        humanReviewItems.push(`${sec}: ${k.replace(/_/g, ' ')} — source query failed, verify directly`)
+      }
+    }
   }
 
-  // Unverified items
-  if (report.unverified_items?.length) {
-    w.subheading('Items Requiring Verification')
-    for (const u of report.unverified_items) w.bullet(u)
-    w.gap(6)
+  if (!humanReviewItems.length) {
+    w.text('No critical human review flags.', { size: 9, color: C_GREEN })
+  } else {
+    for (const item of humanReviewItems) {
+      const sev = item.includes('CRITICAL') ? 'HIGH' : item.includes('LOW CONFIDENCE') ? 'MEDIUM' : 'INFO'
+      w.flagRow(item, sev)
+    }
+  }
+  w.gap(8)
+
+  // ── AI ESTIMATES (Phase 0 quarantine) ────────────────────────────────────
+  const hasInferred = (() => {
+    for (const [, obj] of allSections) {
+      if (!obj) continue
+      for (const [k, v] of Object.entries(obj)) {
+        if (k === 'confidence_overall') continue
+        if (v && typeof v === 'object' && 'value' in v && isInferred(v as DataPoint)) return true
+      }
+    }
+    return false
+  })()
+
+  if (hasInferred) {
+    w.heading('AI Estimates — Requires Verification Before Use')
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 6, width: CONTENT_W, height: 22, color: rgb(0.80, 0.44, 0.02), opacity: 0.08 })
+    w.y -= 4
+    w.text(
+      'WARNING: The following fields are AI-generated estimates with NO verified primary source. ' +
+      'They must NOT be used as sole basis for any lending, valuation, or investment decision. ' +
+      'Obtain independent verification before relying on these values.',
+      { size: 8, color: C_AMBER, maxW: CONTENT_W - 4 },
+    )
+    w.gap(10)
+
+    for (const [sectionTitle, obj] of allSections) {
+      if (!obj) continue
+      const rows = Object.entries(obj).filter(([k, v]) => {
+        if (k === 'confidence_overall') return false
+        return v && typeof v === 'object' && 'value' in v && isInferred(v as DataPoint)
+      })
+      if (!rows.length) continue
+      w.subheading(`${sectionTitle} — AI Estimates`)
+      w.tableHeader(['FIELD', 'VALUE', 'STATUS', 'CONF', 'SOURCE'], [2, 158, 336, 414, 440])
+      for (const [k, v] of rows) w.dataRow(k.replace(/_/g, ' '), v as DataPoint)
+      w.gap(6)
+    }
   }
 
-  // ── SOURCE APPENDIX ────────────────────────────────────────────────────────
-  w.heading('Source Appendix')
-  w.text('All data sources queried for this report:', { size: 9, color: C_GRAY })
+  // ── SOURCE APPENDIX ───────────────────────────────────────────────────────
+  w.heading('Source Appendix — All Data Sources')
+  w.text('All public-record sources queried for this report, with retrieval timestamps.', { size: 8.5, color: C_GRAY })
   w.gap(6)
 
   const sources: [string, string, string][] = [
-    ['LA City ZIMAS',       'maps.lacity.org/lahub', 'Zoning code, FAR, height district — live query'],
-    ['LA County Assessor',  'assessor.lacounty.gov', 'Lot size, year built, sale history'],
-    ['LADBS',               'data.lacity.org',       'Building permits and code violations'],
-    ['FEMA NFHL',           'hazards.fema.gov',      'Flood zone designation'],
-    ['CalFire FHSZ',        'services1.arcgis.com',  'Fire hazard severity zone'],
-    ['US Census / ACS5',    'api.censusreporter.org','Median income, rent burden'],
-    ['HUD OZ',              'services.arcgis.com',   'Opportunity Zone designation'],
+    ['LA City ZIMAS',            'maps.lacity.org/lahub',                    'Zoning code, FAR, height district — live spatial query'],
+    ['LA County Assessor',       'assessor.lacounty.gov',                    'Lot size, year built, last sale price and date'],
+    ['LADBS Permits',            'data.lacity.org/resource/hbkd-qubn',       'Building permit history'],
+    ['LADBS Violations',         'data.lacity.org/resource/u82d-eh7z',       'Code enforcement open violations'],
+    ['FEMA NFHL',                'hazards.fema.gov',                         'Flood zone designation (National Flood Hazard Layer)'],
+    ['CalFire FHSZ',             'services1.arcgis.com (CalFire)',            'Fire Hazard Severity Zone (2023 update)'],
+    ['US Census / ACS5',         'api.censusreporter.org',                   'Median income, severe rent burden (B19013, B25070)'],
+    ['HUD Opportunity Zones',    'services.arcgis.com (HUD)',                'Opportunity Zone designation'],
+    ['LA City TOC Tiers',        'services1.arcgis.com (LA City Planning)',   'Transit Oriented Communities incentive area tiers 1-4'],
+    ['USGS Seismic / ASCE 7-22', 'earthquake.usgs.gov/ws/designmaps',        'Spectral acceleration (Ss, S1, PGA) for seismic risk'],
   ]
 
+  w.tableHeader(['SOURCE', 'ENDPOINT', 'DATA RETURNED'], [2, 140, 295])
   for (const [name, url, desc] of sources) {
-    w.ensure(22)
-    w.page.drawText(name, { x: MARGIN, y: w.y, size: 9, font: bold, color: C_DARK })
-    w.page.drawText(url,  { x: MARGIN + 140, y: w.y, size: 9, font: mono, color: C_CYAN })
-    w.y -= 13
-    w.text(desc, { size: 8, color: C_GRAY, indent: 0 })
-    w.gap(2)
+    w.ensure(20)
+    w.page.drawText(name, { x: MARGIN + 2, y: w.y, size: 8, font: bold, color: C_DARK })
+    w.page.drawText(url.slice(0, 38), { x: MARGIN + 140, y: w.y, size: 7.5, font: mono, color: C_CYAN })
+    w.page.drawText(desc.slice(0, 55), { x: MARGIN + 295, y: w.y, size: 7.5, font: reg, color: C_MED })
+    w.y -= 14
   }
-
-  w.gap(10)
-  w.subheading('Skills Executed')
-  for (const skill of report.skills_activated ?? []) {
-    const icon = skill.activated ? '+' : 'x'
-    const col  = skill.activated ? C_GREEN : C_RED
-    w.ensure(14)
-    w.page.drawText(icon, { x: MARGIN, y: w.y, size: 9, font: bold, color: col })
-    w.page.drawText(
-      `${skill.skill_name}  —  confidence ${skill.confidence}%  |  ${skill.data_freshness}` +
-      (skill.error ? `  |  ERROR: ${skill.error.slice(0, 60)}` : ''),
-      { x: MARGIN + 14, y: w.y, size: 8, font: mono, color: C_DARK },
-    )
-    w.y -= 13
-  }
-
-  // ── TIMESTAMP & AUDIT FOOTER ───────────────────────────────────────────────
-  w.gap(16)
-  w.hline(C_BG, 0.5)
-  w.gap(4)
-  w.text(`Audit ID: ${report.request_id}`, { size: 8, font: mono, color: C_GRAY })
-  w.text(`Generated: ${report.generated_at}  |  Tier: ${report.tier}  |  Cache hit: ${report.cache_hit}`, {
-    size: 8, font: mono, color: C_GRAY,
-  })
   w.gap(8)
 
-  // ── DISCLAIMER ─────────────────────────────────────────────────────────────
-  w.ensure(60)
-  w.page.drawRectangle({ x: MARGIN, y: w.y - 50, width: CONTENT_W, height: 58, color: C_BG })
-  w.y -= 4
-  w.text('DISCLAIMER', { size: 8, font: bold, color: C_AMBER, indent: 6 })
-  w.text(report.disclaimer, { size: 7.5, color: C_DARK, indent: 6, maxW: CONTENT_W - 12 })
-  w.text(
-    'Verified public-record data is separated from AI interpretation throughout this report. ' +
-    'Fields marked INFERRED are AI-generated estimates and must be independently verified before any transaction.',
-    { size: 7.5, color: C_GRAY, indent: 6, maxW: CONTENT_W - 12 },
-  )
+  // Skills log
+  w.subheading('Skills Executed')
+  for (const skill of report.skills_activated ?? []) {
+    const icon = skill.activated ? '[OK]' : '[FAIL]'
+    const col  = skill.activated ? C_GREEN : C_RED
+    w.ensure(13)
+    w.page.drawText(icon, { x: MARGIN, y: w.y, size: 7.5, font: bold, color: col })
+    w.page.drawText(
+      `${skill.skill_name}  conf:${skill.confidence}%  ${skill.data_freshness}` +
+      (skill.error ? `  ERR: ${skill.error.slice(0, 50)}` : ''),
+      { x: MARGIN + 34, y: w.y, size: 7.5, font: mono, color: C_MED },
+    )
+    w.y -= 12
+  }
 
-  // Page numbers
+  // ── FOOTER ON EVERY PAGE ──────────────────────────────────────────────────
   const pages = doc.getPages()
   for (let i = 0; i < pages.length; i++) {
-    pages[i].drawText(`SevenNova.ai  |  Page ${i + 1} of ${pages.length}  |  ${report.address.full_address.slice(0, 50)}`, {
-      x: MARGIN, y: 22, size: 7, font: reg, color: C_GRAY,
+    const pg = pages[i]
+    pg.drawLine({ start: { x: MARGIN, y: 38 }, end: { x: PAGE_W - MARGIN, y: 38 }, thickness: 0.4, color: C_LGRAY })
+    pg.drawText('SevenNova RiskCore  |  Verified Public-Record Evidence Pack  |  NOT A LICENSED APPRAISAL', {
+      x: MARGIN, y: 26, size: 6.5, font: reg, color: C_GRAY,
     })
+    pg.drawText(`Audit ID: ${report.request_id}  |  ${report.generated_at}  |  Page ${i + 1} of ${pages.length}`, {
+      x: MARGIN, y: 16, size: 6.5, font: mono, color: C_GRAY,
+    })
+  }
+
+  // Final disclaimer page
+  w.newPage()
+  w.heading('Disclaimer & Legal Notice')
+  w.gap(6)
+  const disclaimerParas = [
+    report.disclaimer,
+    'VERIFIED fields are sourced from live public-record government APIs at the time of generation. SevenNova does not guarantee the accuracy or completeness of third-party data sources.',
+    'AI ESTIMATE fields are generated by large language models and are not sourced from any primary data provider. These fields must be independently verified before any transaction.',
+    'This report does not constitute a licensed real estate appraisal, broker price opinion, legal opinion, credit decision, or investment recommendation.',
+    'ATTORNEY REVIEW REQUIRED: All legal determinations including zoning compliance, entitlement feasibility, and code violation liability require review by a licensed California real estate attorney.',
+    'MLS COMPS SUPPRESSED: No comparable sales data is included in this report. Valuation conclusions require a licensed MLS data feed and a licensed appraiser or broker.',
+  ]
+  for (const para of disclaimerParas) {
+    w.text(para, { size: 9 })
+    w.gap(8)
   }
 
   return doc.save()

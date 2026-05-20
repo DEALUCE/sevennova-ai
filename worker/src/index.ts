@@ -216,7 +216,7 @@ app.post('/api/v1/report/pdf', async (c) => {
       c.env, apiKey,
     )
 
-    const pdfBytes = await generatePDFReport(report, apiKey).catch(async (e) => {
+    const pdfBytes = await generatePDFReport(report, apiKey, c.env.GOOGLE_MAPS_API_KEY).catch(async (e) => {
       await logFailure(c.env, 'pdf_generation', String(e), street)
       throw e
     })
@@ -346,6 +346,14 @@ app.post('/api/v1/webhook/stripe', async (c) => {
     const customerEmail = metadata.email ?? (obj?.customer_details as Record<string, string> | undefined)?.email ?? ''
     const tier = metadata.tier ?? 'full'
 
+    // Phase 4: Idempotency — if this session already has a key, return it (webhook replay safe)
+    if (sessionId && c.env.SEVENNOVA_KEYS) {
+      const existingKey = await c.env.SEVENNOVA_KEYS.get(`session:${sessionId}`)
+      if (existingKey) {
+        return c.json({ received: true, event_type: eventType, api_key: existingKey, idempotent: true })
+      }
+    }
+
     // Generate API key with usage limits
     const apiKey = `key_${crypto.randomUUID().replace(/-/g, '')}`
     const keyRecord = JSON.stringify({
@@ -465,6 +473,45 @@ app.get('/admin/reports/:audit_id', async (c) => {
   const record = await getAuditRecord(c.env, auditId)
   if (!record) return c.json({ error: 'Audit record not found' }, 404)
   return c.json(record)
+})
+
+// GET /admin/usage/export — monthly usage for all keys (billing reconciliation)
+app.get('/admin/usage/export', async (c) => {
+  if (!c.env.SEVENNOVA_KEYS) return c.json({ error: 'KV not configured' }, 503)
+  const month = c.req.query('month') ?? new Date().toISOString().slice(0, 7)
+  const listed = await c.env.SEVENNOVA_KEYS.list({ prefix: `usage:monthly:` })
+  const rows: Record<string, unknown>[] = []
+  for (const kv of (listed.keys as Array<{ name: string }>) ?? []) {
+    if (!kv.name.includes(`:${month}`)) continue
+    const parts = kv.name.split(':')
+    const keyId = parts[2] ?? ''
+    const raw = await c.env.SEVENNOVA_KEYS.get(kv.name)
+    rows.push({ api_key: keyId, month, reports_generated: raw ? parseInt(raw, 10) : 0 })
+  }
+  return c.json({ month, count: rows.length, usage: rows })
+})
+
+// Phase 5: Customer usage endpoint (own key only — no admin required)
+app.get('/api/v1/usage', async (c) => {
+  const apiKey = c.req.header('X-API-Key') ?? ''
+  if (!apiKey || !c.env.SEVENNOVA_KEYS) return c.json({ error: 'unauthorized' }, 401)
+  const month = new Date().toISOString().slice(0, 7)
+  const today = new Date().toISOString().slice(0, 10)
+  const [monthlyRaw, dailyRaw, keyData] = await Promise.all([
+    c.env.SEVENNOVA_KEYS.get(`usage:monthly:${apiKey}:${month}`),
+    c.env.SEVENNOVA_KEYS.get(`ratelimit:${apiKey}:${today}`),
+    c.env.SEVENNOVA_KEYS.get(apiKey),
+  ])
+  let tier = 'full'
+  try { tier = JSON.parse(keyData ?? '{}').tier ?? 'full' } catch { /* */ }
+  const limits: Record<string, number> = { basic: 3, full: 10, institutional: 25 }
+  return c.json({
+    tier,
+    month,
+    reports_this_month: monthlyRaw ? parseInt(monthlyRaw, 10) : 0,
+    reports_today: dailyRaw ? parseInt(dailyRaw, 10) : 0,
+    daily_limit: limits[tier] ?? 10,
+  })
 })
 
 // ── FAILURE LOGGER ─────────────────────────────────────────────────────────────

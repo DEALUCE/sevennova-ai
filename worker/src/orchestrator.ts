@@ -2,6 +2,8 @@ import { SKILL_PROMPTS, NARRATIVE_PROMPT } from './skill-prompts'
 import { fetchZoning, type ZimasResult } from './zimas'
 import { sendEmail } from './agents/resend'
 import { storeAuditRecord } from './audit'
+import { fetchTOCTier } from './toc'
+import { fetchSeismic } from './seismic'
 
 export interface Env {
   ANTHROPIC_API_KEY: string
@@ -14,7 +16,8 @@ export interface Env {
   DEV_MODE?: string
   OLLAMA_URL?: string
   RESEND_API_KEY: string
-  ADMIN_SECRET?: string  // Phase 4 — set via: wrangler secret put ADMIN_SECRET
+  ADMIN_SECRET?: string          // Phase 4 — set via: wrangler secret put ADMIN_SECRET
+  GOOGLE_MAPS_API_KEY?: string   // Phase 2 — optional Street View on PDF cover; wrangler secret put GOOGLE_MAPS_API_KEY
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   SEVENNOVA_KEYS: any
 }
@@ -540,13 +543,15 @@ export async function generateReport(
     const lon = zimasPhase1?.lon ?? -118.2437
 
     // Phase 2: All geo-dependent fetchers in parallel using resolved lat/lon
-    const [ladbsResult, femaResult, calfireResult, censusResult, hudResult] =
+    const [ladbsResult, femaResult, calfireResult, censusResult, hudResult, tocResult, seismicResult] =
       await Promise.allSettled([
         fetchLADBS(street, zipCode),
         fetchFEMA(lat, lon),
         fetchCalFire(lat, lon),
         fetchCensus(lat, lon),
         fetchHUD(lat, lon),
+        fetchTOCTier(lat, lon),    // Quick win 2 — LA City GIS TOC layer
+        fetchSeismic(lat, lon),    // Quick win 4 — USGS ShakeMap
       ])
 
     const zimas: ZimasResult | null = zimasPhase1
@@ -556,6 +561,41 @@ export async function generateReport(
     const calfire = calfireResult.status === 'fulfilled' ? calfireResult.value : null
     const census = censusResult.status === 'fulfilled' ? censusResult.value : null
     const hud = hudResult.status === 'fulfilled' ? hudResult.value : null
+    const toc = tocResult.status === 'fulfilled' ? tocResult.value : null
+    const seismic = seismicResult.status === 'fulfilled' ? seismicResult.value : null
+
+    // Quick win 1 — Buildable SF + Max Units: pure math from ZIMAS FAR × Assessor lot size
+    // Status VERIFIED only when both source values are confirmed live data
+    const lotSizeSf = (assessor?.lot_size_sf as number | null) ?? null
+    const zimasFar = zimas?.max_far ?? null
+    const buildableSfCalc = (lotSizeSf && zimasFar) ? Math.round(lotSizeSf * zimasFar) : null
+
+    const zoneClass = zimas?.zone_class ?? ''
+    let maxUnitsByRightCalc: number | null = null
+    if (lotSizeSf && zoneClass) {
+      // LAMC Title 12 base density by zone class (simplified, by-right only, no ADU bonus)
+      if (zoneClass.startsWith('R1'))      maxUnitsByRightCalc = 2          // house + 1 ADU by SB 9
+      else if (zoneClass.startsWith('R1.5')) maxUnitsByRightCalc = Math.max(3, Math.floor(lotSizeSf / 1200))
+      else if (zoneClass === 'RD1.5')      maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD2')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD3')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1200)
+      else if (zoneClass === 'RD4')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 1600)
+      else if (zoneClass === 'RD5')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 2000)
+      else if (zoneClass === 'RD6')        maxUnitsByRightCalc = Math.floor(lotSizeSf / 2400)
+      else if (zoneClass.startsWith('R2')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 1500)
+      else if (zoneClass.startsWith('R3')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 800)
+      else if (zoneClass.startsWith('R4')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 400)
+      else if (zoneClass.startsWith('R5')) maxUnitsByRightCalc = Math.floor(lotSizeSf / 200)
+      // C/M zones: residential density not applicable by-right (commercial use)
+    }
+
+    // TOC bonus units (if in TOC area and residential zone)
+    const TOC_BONUS: Record<number, number> = { 1: 0.225, 2: 0.325, 3: 0.50, 4: 0.80 }
+    let maxUnitsTOCCalc: number | null = null
+    if (maxUnitsByRightCalc !== null && toc?.tier) {
+      const bonus = TOC_BONUS[toc.tier] ?? 0
+      maxUnitsTOCCalc = Math.floor(maxUnitsByRightCalc * (1 + bonus))
+    }
 
     const zimasZoneClass = zimas?.zone_class ?? ''
     const isCommercialFromZimas = /^(C|M|CM|CR)/.test(zimasZoneClass)
@@ -596,6 +636,28 @@ export async function generateReport(
       census_source: census ? 'CENSUS_ACS_LIVE' : 'UNAVAILABLE',
       opportunity_zone: hud?.opportunity_zone ?? null,
       hud_source: hud ? 'HUD_LIVE' : 'UNAVAILABLE',
+      // Quick win 2 — TOC Tier (LA City GIS)
+      toc_tier: toc?.tier ?? null,
+      toc_tier_label: toc?.tier_label ?? null,
+      toc_in_area: toc?.in_toc_area ?? false,
+      toc_source: toc && !toc.error ? 'LA_CITY_TOC_LIVE' : 'UNAVAILABLE',
+      toc_source_url: toc?.source_url ?? null,
+      toc_retrieved_at: toc?.retrieved_at ?? null,
+      toc_error: toc?.error ?? null,
+      // Quick win 4 — Seismic (USGS)
+      seismic_ss: seismic?.ss ?? null,
+      seismic_s1: seismic?.s1 ?? null,
+      seismic_pga: seismic?.pga ?? null,
+      seismic_risk_score: seismic?.risk_score ?? null,
+      seismic_risk_label: seismic?.risk_label ?? null,
+      seismic_source: seismic && !seismic.error ? 'USGS_SEISMIC_LIVE' : 'UNAVAILABLE',
+      seismic_source_url: seismic?.source_url ?? null,
+      seismic_retrieved_at: seismic?.retrieved_at ?? null,
+      // Quick win 1 — Buildable SF + Max Units (calculated from ZIMAS + Assessor)
+      buildable_sf_calc: buildableSfCalc,
+      max_units_by_right_calc: maxUnitsByRightCalc,
+      max_units_toc_calc: maxUnitsTOCCalc,
+      derived_fields_status: (zimasFar !== null && lotSizeSf !== null) ? 'VERIFIED_CALCULATED' : 'UNAVAILABLE',
     }
 
     if (env.SEVENNOVA_KEYS) {
@@ -749,13 +811,23 @@ export async function generateReport(
       : extractDP(zoningRaw, 'ladbs_violations'),
     // AI-inferred fields — entitlement overlays require LAMC + DCP analysis
     permitted_uses: extractDP(zoningRaw, 'permitted_uses'),
-    toc_tier: extractDP(zoningRaw, 'toc_tier'),
+    // Quick win 2 — TOC tier from LA City GIS (VERIFIED when available)
+    toc_tier: parcelData.toc_source === 'LA_CITY_TOC_LIVE'
+      ? verifiedDP(parcelData.toc_in_area ? `Tier ${parcelData.toc_tier} — ${parcelData.toc_tier_label}` : 'Not in TOC area', 99, 'LA City Planning GeoHub — TOC Eligible Areas', String(parcelData.toc_source_url ?? ''))
+      : dp(null, 0, 'UNAVAILABLE'),
     ed1_eligible: extractDP(zoningRaw, 'ed1_eligible'),
     ab2011_eligible: extractDP(zoningRaw, 'ab2011_eligible'),
     rso_covered: extractDP(zoningRaw, 'rso_covered'),
-    buildable_sf: extractDP(zoningRaw, 'buildable_sf'),
-    max_units_by_right: extractDP(zoningRaw, 'max_units_by_right'),
-    max_units_toc: extractDP(zoningRaw, 'max_units_toc'),
+    // Quick win 1 — use calculated values when available; fall back to AI skill
+    buildable_sf: parcelData.buildable_sf_calc != null
+      ? verifiedDP(parcelData.buildable_sf_calc, 95, 'Calculated: ZIMAS FAR × LA County Assessor lot size', 'https://assessor.lacounty.gov')
+      : dp(null, 0, 'UNAVAILABLE'),
+    max_units_by_right: parcelData.max_units_by_right_calc != null
+      ? verifiedDP(parcelData.max_units_by_right_calc, 90, 'Calculated: LAMC Title 12 base density × lot size (architectural analysis required for final count)', 'https://library.municode.com/ca/los_angeles/codes/municipal_code')
+      : dp(null, 0, 'UNAVAILABLE'),
+    max_units_toc: parcelData.max_units_toc_calc != null
+      ? verifiedDP(parcelData.max_units_toc_calc, 88, 'Calculated: by-right units × TOC bonus (LA City Planning GeoHub)', 'https://planning.lacity.gov/plans-policies/initiatives-policies/toc')
+      : dp(null, 0, 'UNAVAILABLE'),
     confidence_overall: zimasLive ? Math.max(Number(zoningRaw.confidence_overall ?? 70), 85) : Number(zoningRaw.confidence_overall ?? 70),
   } : undefined
 
@@ -786,7 +858,15 @@ export async function generateReport(
     flood_risk_score: extractDP(climateRaw, 'flood_risk_score'),
     wildfire_risk_score: extractDP(climateRaw, 'wildfire_risk_score'),
     heat_risk_score: extractDP(climateRaw, 'heat_risk_score'),
-    seismic_risk_score: extractDP(climateRaw, 'seismic_risk_score'),
+    // Quick win 4 — seismic from USGS (VERIFIED when available)
+    seismic_risk_score: parcelData.seismic_source === 'USGS_SEISMIC_LIVE' && parcelData.seismic_risk_score != null
+      ? verifiedDP(
+          `${parcelData.seismic_risk_label} (Ss=${parcelData.seismic_ss}g${parcelData.seismic_pga != null ? ', PGA=' + parcelData.seismic_pga + 'g' : ''})`,
+          99,
+          'USGS Earthquake Hazards Program — ASCE 7-22 Design Maps',
+          String(parcelData.seismic_source_url ?? ''),
+        )
+      : dp(null, 0, 'UNAVAILABLE'),
     insurance_stress_score: extractDP(climateRaw, 'insurance_stress_score'),
     climate_haircut_pct: extractDP(climateRaw, 'climate_haircut_pct'),
     confidence_overall: Number(climateRaw.confidence_overall ?? 70),
@@ -846,6 +926,15 @@ export async function generateReport(
 
   // Phase 5 — Audit trail (fire-and-forget, non-blocking)
   storeAuditRecord(env, report, userKey, null).catch(() => {})
+
+  // Phase 5 — Monthly usage accounting (separate from rate limiting — billing source of truth)
+  if (env.SEVENNOVA_KEYS && userKey !== 'anonymous') {
+    const monthKey = `usage:monthly:${userKey}:${now.slice(0, 7)}` // YYYY-MM
+    env.SEVENNOVA_KEYS.get(monthKey).then(async (raw: string | null) => {
+      const count = raw ? parseInt(raw, 10) : 0
+      await env.SEVENNOVA_KEYS.put(monthKey, String(count + 1), { expirationTtl: 86400 * 35 })
+    }).catch(() => {})
+  }
 
   // Agent 4: Quality monitor — fire-and-forget, never blocks report return
   if (env.SEVENNOVA_KEYS && overallConfidence < 40) {
