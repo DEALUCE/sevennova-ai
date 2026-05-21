@@ -2,13 +2,15 @@
 // Cloudflare Pages Function — no separate server needed
 
 export async function onRequestPost(context) {
-  const { request } = context;
+  const { request, env } = context;
+  const lacityToken = env?.LACITY_APP_TOKEN || '';
 
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
 
   const address = (body.address || '').trim();
   if (!address) return json({ error: 'Address is required' }, 400);
+  const proFormaOverrides = body.pro_forma || {};
 
   try {
     // 1. Geocode
@@ -45,6 +47,17 @@ export async function onRequestPost(context) {
     const { qualified, potential, ineligible } = evaluateGrants(profile);
     const liveGrants = await fetchLiveGrants();
     const nextSteps  = buildNextSteps(profile);
+
+    // 9. LA City live data (permits + violations)
+    const siteAddr = parcel.site_address || geo.matched_address || address;
+    const [permits, violations] = await Promise.all([
+      fetchPermits(siteAddr, lacityToken),
+      fetchViolations(siteAddr, lacityToken),
+    ]);
+
+    // 10. Entitlement analysis + developer pro forma
+    const entitlementAnalysis = calcEntitlementAnalysis(parcel, toc, zoneInfo, dev);
+    const profitModel = calcProfitModel(parcel, dev, toc, entitlementAnalysis, proFormaOverrides);
 
     return json({
       generated:   new Date().toLocaleString('en-US', { month:'long', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }),
@@ -108,6 +121,10 @@ export async function onRequestPost(context) {
         summary: { total_qualified: qualified.length, total_potential: potential.length, total_ineligible: ineligible.length, live_count: liveGrants.length },
       },
       next_steps: nextSteps,
+      entitlement_analysis: entitlementAnalysis,
+      profit_model: profitModel,
+      permits,
+      violations,
       data_sources: [
         'US Census Bureau Geocoder (free)',
         'LA County Assessor Portal',
@@ -116,6 +133,13 @@ export async function onRequestPost(context) {
         'Grants.gov live API',
         'CA SB 9 eligibility rules',
         'LA ADU ordinance',
+        'LA City Open Data — Building & Safety Permits',
+        'LA City Open Data — Code Enforcement Violations',
+        'LAMC § 12.22 A.25 — TOC Entitlement Pathways',
+        "Mayor's Executive Directive 1 (2022) — Streamlined Affordable Housing",
+        'California Gov. Code § 65913.4 — SB 35 (2017)',
+        'AB 2011 (2022) — Commercial Corridor Conversion',
+        'Developer Pro Forma — LA cost benchmarks 2025/2026 (estimates only)',
       ],
     });
   } catch (e) {
@@ -693,6 +717,93 @@ async function fetchLiveGrants() {
   }));
 }
 
+// ── LA City Open Data: Building Permits ──────────────────────────────────────
+
+async function fetchPermits(siteAddress, appToken) {
+  try {
+    // Extract street number and first word of street name from address
+    const base = siteAddress.replace(/,.*/, '').trim().toUpperCase();
+    const m = base.match(/^(\d+)\s+(?:[NSEW]\s+)?(\w+)/);
+    if (!m) return { count: 0, items: [], note: 'Address parse failed' };
+    const [, num, streetWord] = m;
+    const headers = appToken ? { 'X-App-Token': appToken } : {};
+    // Building and Safety - Building Permits Issued from 2020 to Present
+    const where = `primary_address like '${num}%${streetWord}%'`;
+    const url = `https://data.lacity.org/resource/pi9x-tg5x.json?` +
+      `$where=${encodeURIComponent(where)}&$order=issue_date DESC&$limit=15`;
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return { count: 0, items: [], note: `API ${r.status}` };
+    const data = await r.json();
+    if (!Array.isArray(data)) return { count: 0, items: [], note: 'No data' };
+    return {
+      count: data.length,
+      items: data.map(p => ({
+        permit_number: p.permit_nbr || '',
+        type:          p.permit_type || '',
+        sub_type:      p.permit_sub_type || '',
+        description:   p.work_desc || '',
+        status:        p.status_desc || '',
+        issue_date:    p.issue_date ? p.issue_date.split('T')[0] : '',
+        cofo_date:     p.cofo_date ? p.cofo_date.split('T')[0] : '',
+        valuation:     p.valuation ? `$${parseInt(p.valuation).toLocaleString()}` : '',
+        zone:          p.zone || '',
+        address:       p.primary_address || '',
+      })),
+      note: data.length === 0 ? 'No permits on record (2020–present)' : '',
+    };
+  } catch (e) {
+    return { count: 0, items: [], note: `Error: ${e.message}` };
+  }
+}
+
+// ── LA City Open Data: Code Enforcement Violations ───────────────────────────
+
+async function fetchViolations(siteAddress, appToken) {
+  try {
+    // Split into number + street components for violation dataset schema
+    const base = siteAddress.replace(/,.*/, '').trim().toUpperCase();
+    const m = base.match(/^(\d+)\s+(?:([NSEW])\s+)?(.+)$/);
+    if (!m) return { count: 0, items: [], note: 'Address parse failed' };
+    const [, stno, , stname] = m;
+    // stname may include suffix (RD, AVE, BLVD) — strip it for loose match
+    const streetCore = stname.replace(/\b(RD|AVE|BLVD|ST|DR|LN|WAY|PL|CT|CIR|TER|ROAD|AVENUE|STREET|DRIVE|BOULEVARD)\b/g, '').trim();
+    const headers = appToken ? { 'X-App-Token': appToken } : {};
+    // Open violations
+    const openUrl = `https://data.lacity.org/resource/u82d-eh7z.json?` +
+      `stno=${encodeURIComponent(stno)}&$where=${encodeURIComponent(`upper(stname) like '${streetCore}%'`)}&$limit=10`;
+    // Closed violations
+    const closedUrl = `https://data.lacity.org/resource/rken-a55j.json?` +
+      `stno=${encodeURIComponent(stno)}&$where=${encodeURIComponent(`upper(stname) like '${streetCore}%'`)}&$limit=10`;
+    const [rOpen, rClosed] = await Promise.all([
+      fetch(openUrl, { headers, signal: AbortSignal.timeout(8000) }),
+      fetch(closedUrl, { headers, signal: AbortSignal.timeout(8000) }),
+    ]);
+    const [openData, closedData] = await Promise.all([
+      rOpen.ok ? rOpen.json() : [],
+      rClosed.ok ? rClosed.json() : [],
+    ]);
+    const mapVio = (v, status) => ({
+      case_number: v.apno || '',
+      type:        v.aptype || '',
+      status:      status,
+      date_opened: v.adddttm ? v.adddttm.split('T')[0] : '',
+      address:     [v.stno, v.predir, v.stname, v.suffix].filter(Boolean).join(' '),
+      zip:         (v.zip || '').replace(/-$/, ''),
+    });
+    const open   = Array.isArray(openData)   ? openData.map(v => mapVio(v, 'OPEN'))   : [];
+    const closed = Array.isArray(closedData) ? closedData.map(v => mapVio(v, 'CLOSED')) : [];
+    const all    = [...open, ...closed];
+    return {
+      open_count:   open.length,
+      closed_count: closed.length,
+      items:        all,
+      note: all.length === 0 ? 'No code enforcement cases on record' : '',
+    };
+  } catch (e) {
+    return { open_count: 0, closed_count: 0, items: [], note: `Error: ${e.message}` };
+  }
+}
+
 // ── Next steps ────────────────────────────────────────────────────────────────
 
 function buildNextSteps(profile) {
@@ -882,4 +993,390 @@ function grantToObj(g) {
   return { name:g.name, agency:g.agency, level:g.level, category:g.category,
     description:g.description, url:g.url, max_award:g.max_award, deadline:g.deadline,
     score:g.score, match_reasons:g.match_reasons, disqualifiers:g.disqualifiers };
+}
+
+// ── Entitlement Analysis ──────────────────────────────────────────────────────
+// Produces ranked development pathways with LAMC / state statute citations.
+
+function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
+  const z = (parcel.zoning_pdb || '').toUpperCase().trim();
+  const lotSf = parcel.sqft_lot || 0;
+  const baseUnits = dev.base_units_by_right || 0;
+  const tocUnits = dev.toc_units || 0;
+  const isSFR = !zoneInfo.multifamily && /^(R1|RS|RE|RA|RU|RZ)/.test(z);
+  const isCommercial = /^(C1|C2|C4|CM|CR)/.test(z);
+  const pathways = [];
+
+  // 1. Standard by-right
+  if (baseUnits > 0) {
+    pathways.push({
+      id: 'by-right',
+      name: 'Standard By-Right Development',
+      category: 'by-right',
+      timeline: '6–14 months',
+      max_units: baseUnits,
+      affordable_required_pct: 0,
+      key_requirements: ['Comply with current zoning (FAR, height, setbacks)', 'LADBS plan check only', 'No affordable units required'],
+      risks: ['Units capped at base zoning — no density bonus', 'Full parking requirements apply'],
+      citation: 'LAMC Title 12 — Zoning Regulations',
+      citation_url: 'https://codelibrary.amlegal.com/codes/los_angeles/latest/lamc/0-0-0-161100',
+      speed_rank: 2, units_rank: baseUnits < tocUnits ? 3 : 2, risk_rank: 1,
+    });
+  }
+
+  // 2. TOC by-right
+  if (toc.eligible && toc.tier >= 1 && tocUnits > baseUnits) {
+    const bonusPct = [0,22.5,32.5,50,80][toc.tier] || 0;
+    const affReq = [0,8,11,15,20][toc.tier] || 0;
+    pathways.push({
+      id: 'toc',
+      name: `TOC Tier ${toc.tier} By-Right`,
+      category: 'ministerial',
+      timeline: '6–14 months',
+      max_units: tocUnits,
+      affordable_required_pct: affReq,
+      key_requirements: [
+        `${affReq}% of units affordable at ≤80% AMI (55-year covenant)`,
+        `Within Tier ${toc.tier} transit distance — LAMC 12.22 A.25 compliant`,
+        'No public hearing required — ministerial approval',
+        'Parking reduction available (AB 2097)',
+      ],
+      risks: ['Affordable units reduce market-rate revenue', 'TOC design standards review'],
+      citation: 'LAMC § 12.22 A.25 — TOC Affordable Housing Incentive Program',
+      citation_url: 'https://codelibrary.amlegal.com/codes/los_angeles/latest/lamc/0-0-0-175046',
+      speed_rank: 2, units_rank: 2, risk_rank: 2,
+    });
+  }
+
+  // 3. ED1 (100% affordable — citywide)
+  {
+    const ed1Units = Math.max(tocUnits, baseUnits * 2, 5);
+    pathways.push({
+      id: 'ed1',
+      name: 'ED1 Streamlined (100% Affordable)',
+      category: 'ministerial',
+      timeline: '2–6 months',
+      max_units: ed1Units,
+      affordable_required_pct: 100,
+      key_requirements: [
+        '100% of units affordable at ≤80% AMI (mix allowed)',
+        'Minimum 5 units',
+        'Ministerial review only — no Planning Commission hearing',
+        'Prevailing wage if using public financing',
+      ],
+      risks: ['No market-rate revenue — must stack with LIHTC/HOME/AHSC to pencil', 'Best for affordable housing developers / non-profits'],
+      citation: "Mayor's Executive Directive 1 (2022) — 100% Affordable Housing Streamlined Approval",
+      citation_url: 'https://clkrep.lacity.org/onlinedocs/2022/22-0905_misc_09-07-22.pdf',
+      speed_rank: 1, units_rank: 1, risk_rank: 1,
+    });
+  }
+
+  // 4. SB 35 (streamlined ministerial — LA behind RHNA)
+  if (!isSFR && baseUnits >= 2) {
+    const sb35Units = Math.max(tocUnits, baseUnits);
+    pathways.push({
+      id: 'sb35',
+      name: 'SB 35 Streamlined Ministerial',
+      category: 'streamlined',
+      timeline: '3–9 months',
+      max_units: sb35Units,
+      affordable_required_pct: 50,
+      key_requirements: [
+        '50% of units affordable (2/3 at ≤50% AMI, 1/3 at ≤80% AMI)',
+        'Infill site — previously developed or urban land',
+        'No HPOZ or high-hazard zone',
+        'Prevailing wage for projects with ≥10 units',
+      ],
+      risks: ['50% affordable requirement significant', 'Prevailing wage adds 15–25% to construction cost'],
+      citation: 'California Gov. Code § 65913.4 (SB 35, 2017) — Streamlined Ministerial Approval',
+      citation_url: 'https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?sectionNum=65913.4.',
+      speed_rank: 2, units_rank: 2, risk_rank: 2,
+    });
+  }
+
+  // 5. AB 2011 (commercial corridor conversion)
+  if (isCommercial) {
+    const ab2011Units = Math.max(tocUnits, baseUnits);
+    pathways.push({
+      id: 'ab2011',
+      name: 'AB 2011 Commercial Corridor Conversion',
+      category: 'streamlined',
+      timeline: '3–8 months',
+      max_units: ab2011Units,
+      affordable_required_pct: 15,
+      key_requirements: [
+        `${z} commercial zone qualifies for residential conversion`,
+        '15% affordable (8% at ≤60% AMI + 7% at ≤80% AMI) for mixed-income path',
+        'OR 100% affordable path (ministerial)',
+        'Prevailing wage for projects ≥16 units',
+      ],
+      risks: ['Prevailing wage on larger projects', 'Community plan may require commercial ground floor'],
+      citation: 'AB 2011 (2022) — Affordable Housing and High Road Jobs Act (Health & Safety Code § 65912.100)',
+      citation_url: 'https://leginfo.legislature.ca.gov/faces/billNavClient.xhtml?bill_id=202120220AB2011',
+      speed_rank: 2, units_rank: 2, risk_rank: 2,
+    });
+  }
+
+  // 6. CUP (fallback discretionary)
+  pathways.push({
+    id: 'cup',
+    name: 'Conditional Use Permit (Discretionary)',
+    category: 'discretionary',
+    timeline: '18–36 months',
+    max_units: Math.round(baseUnits * 1.5),
+    affordable_required_pct: 15,
+    key_requirements: ['Application to LA City Planning', 'CEQA environmental review', 'Planning Commission public hearing', 'Subject to neighbor appeals'],
+    risks: ['CEQA challenge exposure', 'Neighbor opposition can add years', 'Not recommended when ministerial paths available'],
+    citation: 'LAMC § 12.24 — Conditional Use Permits',
+    citation_url: 'https://codelibrary.amlegal.com/codes/los_angeles/latest/lamc/0-0-0-175089',
+    speed_rank: 5, units_rank: 3, risk_rank: 5,
+  });
+
+  // Select ranked recommendations (exclude CUP for primary)
+  const primary = pathways.filter(p => p.id !== 'cup');
+  const fastest = primary.length ? primary.reduce((a,b) => a.speed_rank <= b.speed_rank ? a : b) : null;
+  const mostUnits = primary.length ? primary.reduce((a,b) => a.max_units >= b.max_units ? a : b) : null;
+  const lowestRisk = primary.length ? primary.reduce((a,b) => a.risk_rank <= b.risk_rank ? a : b) : null;
+  const ministerial = primary.filter(p => p.category === 'ministerial' || p.category === 'by-right');
+  const recommended = ministerial.length
+    ? ministerial.reduce((a,b) => a.max_units >= b.max_units ? a : b)
+    : primary[0] || null;
+
+  // Estimate permit fees
+  const targetUnits = recommended ? recommended.max_units : baseUnits;
+  const isMinisterial = recommended && (recommended.category === 'ministerial' || recommended.category === 'by-right');
+  const estimatedFees = Math.round(8500 + targetUnits * (isMinisterial ? 1200 : 2500) + (recommended?.category === 'discretionary' ? 35000 : 0));
+
+  // Risk score
+  let risk = 2;
+  if (!toc.eligible) risk += 1;
+  if (!zoneInfo.multifamily && !isSFR) risk += 2;
+  if (baseUnits === 0) risk += 3;
+  risk = Math.min(10, risk);
+
+  // Stacked incentives
+  const stacked = [];
+  if (toc.eligible) {
+    stacked.push({ program:'LIHTC (4% or 9%)', type:'Federal', description:'Federal tax credits stacked with TOC affordable units', est_subsidy_per_unit:85000, stacks_with:['TOC','HOME','AHSC'], citation:'IRC § 42' });
+  }
+  stacked.push({ program:'HOME Investment Partnerships', type:'Federal', description:'HUD HOME funds for affordable rental — stackable with ED1', est_subsidy_per_unit:60000, stacks_with:['ED1','LIHTC'], citation:'42 U.S.C. § 12701' });
+  stacked.push({ program:'AHSC (Affordable Housing Sustainable Communities)', type:'State', description:'CA cap-and-trade funds for affordable housing near transit', est_subsidy_per_unit:120000, stacks_with:['ED1','LIHTC','HOME'], citation:'Health & Safety Code § 50800' });
+
+  return {
+    pathways,
+    fastest_path: fastest ? { id: fastest.id, name: fastest.name, timeline: fastest.timeline, max_units: fastest.max_units } : null,
+    most_units_path: mostUnits ? { id: mostUnits.id, name: mostUnits.name, timeline: mostUnits.timeline, max_units: mostUnits.max_units } : null,
+    lowest_risk_path: lowestRisk ? { id: lowestRisk.id, name: lowestRisk.name, timeline: lowestRisk.timeline, max_units: lowestRisk.max_units } : null,
+    recommended_path: recommended ? { id: recommended.id, name: recommended.name, timeline: recommended.timeline, max_units: recommended.max_units, affordable_required_pct: recommended.affordable_required_pct, citation: recommended.citation } : null,
+    by_right_eligible: baseUnits > 0,
+    streamlined_eligible: primary.some(p => p.category === 'ministerial' || p.category === 'streamlined'),
+    discretionary_required: primary.every(p => p.category === 'discretionary'),
+    estimated_permit_fees: estimatedFees,
+    entitlement_risk_score: risk,
+    stacked_incentives: stacked,
+    units_by_right: baseUnits,
+    units_toc_bonus: tocUnits - baseUnits > 0 ? tocUnits - baseUnits : 0,
+    units_max_any_path: pathways.reduce((m, p) => Math.max(m, p.max_units), 0),
+  };
+}
+
+// ── Developer Profit Model ────────────────────────────────────────────────────
+// Simple IRR solve + construction cost stack for LA multifamily.
+// User overrides accepted via request body (land_price, rent, construction_type).
+
+const HARD_COST_PER_SF = { 'Type V': 275, 'Type III': 350, 'Type I': 500 };
+
+function _irrSolve(flows) {
+  // Sanity check: if total inflows + outflows ≤ 0, IRR is definitively negative
+  const totalReturn = flows.reduce((s,v)=>s+v,0);
+  const initialOut = Math.abs(flows[0]);
+  if (totalReturn <= 0) {
+    // If no positive future cash flow exists, deal is total loss → -99%
+    const hasPositiveFuture = flows.slice(1).some(v => v > 0);
+    if (!hasPositiveFuture) return -99;
+    // Partial negative — bisection from -99% to 0%
+    let lo = -0.99, hi = 0;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      const npv = flows.reduce((s,v,t)=>s+v/Math.pow(1+mid,t),0);
+      if (npv > 0) hi = mid; else lo = mid;
+      if (hi - lo < 0.0001) break;
+    }
+    return Math.round((lo + hi) / 2 * 10000) / 100;
+  }
+  // Newton-Raphson with bisection fallback
+  let r = 0.15;
+  for (let i = 0; i < 80; i++) {
+    let npv = 0, dnpv = 0;
+    for (let t = 0; t < flows.length; t++) {
+      const d = Math.pow(1 + r, t);
+      npv += flows[t] / d;
+      dnpv -= t * flows[t] / Math.pow(1 + r, t + 1);
+    }
+    if (Math.abs(npv) < 1) break;
+    if (Math.abs(dnpv) < 1e-10) { r += 0.01; continue; }
+    const step = npv / dnpv;
+    r -= step;
+    if (r < -0.99) r = -0.99;
+    if (r > 5) r = 5;  // cap at 500% — above this is not meaningful
+  }
+  return Math.round(r * 10000) / 100;
+}
+
+function _annualDebtService(principal, rate, termYears) {
+  if (!rate) return principal / termYears;
+  const r = rate / 12, n = termYears * 12;
+  return principal * (r * Math.pow(1+r,n)) / (Math.pow(1+r,n)-1) * 12;
+}
+
+function _computeProForma(landPrice, units, opts) {
+  const {
+    avgUnitSf = 850,
+    constructionType = 'Type V',
+    rentPerUnit = 2800,
+    vacancyPct = 5,
+    opexPct = 35,
+    capRate = 4.5,
+    ltcPct = 65,
+    interestRate = 6.5,
+    loanTerm = 30,
+    holdYears = 5,
+    permitFees = 8500 + units * 1500,
+  } = opts;
+
+  const hcPerSf = HARD_COST_PER_SF[constructionType] || 275;
+  const gba = units * avgUnitSf;
+  const hard = gba * hcPerSf;
+  const soft = hard * 0.20;
+  const devFee = (hard + soft) * 0.04;
+  const contingency = hard * 0.05;
+  const tdc = landPrice + hard + soft + permitFees + devFee + contingency;
+
+  const gai = units * rentPerUnit * 12;
+  const vacancy = gai * (vacancyPct / 100);
+  const egi = gai - vacancy;
+  const opex = egi * (opexPct / 100);
+  const noi = egi - opex;
+  const exitVal = noi / (capRate / 100);
+  const debt = tdc * (ltcPct / 100);
+  const equity = tdc - debt;
+  const ads = _annualDebtService(debt, interestRate / 100, loanTerm);
+
+  // Levered IRR over hold period
+  const flows = [-equity];
+  for (let yr = 1; yr <= holdYears; yr++) {
+    flows.push(yr < holdYears ? noi - ads : noi - ads + exitVal - debt);
+  }
+  const irrLevered = _irrSolve(flows);
+
+  // Unlevered IRR
+  const uFlows = [-tdc];
+  for (let yr = 1; yr <= holdYears; yr++) {
+    uFlows.push(yr < holdYears ? noi : noi + exitVal);
+  }
+  const irrUnlevered = _irrSolve(uFlows);
+
+  const totalReturn = flows.slice(1).reduce((s,v)=>s+v,0);
+  const equityMultiple = equity > 0 ? Math.round((equity + totalReturn) / equity * 100) / 100 : 0;
+  const coc = equity > 0 ? Math.round((noi - ads) / equity * 10000) / 100 : 0;
+
+  return {
+    tdc: Math.round(tdc), equity: Math.round(equity), debt: Math.round(debt),
+    hard_costs: Math.round(hard), soft_costs: Math.round(soft), permit_fees: Math.round(permitFees),
+    cost_per_unit: Math.round(tdc / units), hard_cost_per_sf: hcPerSf, gba_sf: Math.round(gba),
+    noi: Math.round(noi), exit_value: Math.round(exitVal), exit_per_unit: Math.round(exitVal / units),
+    annual_debt_service: Math.round(ads),
+    irr_levered: irrLevered, irr_unlevered: irrUnlevered,
+    equity_multiple: equityMultiple, cash_on_cash_yr1: coc,
+  };
+}
+
+function calcProfitModel(parcel, dev, toc, entitlement, userOverrides = {}) {
+  const units = entitlement.recommended_path?.max_units || dev.max_potential_units || dev.base_units_by_right || 0;
+  if (!units || !parcel.sqft_lot) {
+    return { note: 'Insufficient parcel data for pro forma. Lot size or unit count unavailable.' };
+  }
+
+  // Default land price: LA County assessed land value (Prop 13 — typically 30-60% of market)
+  // We use a rough multiple: $80-120K/unit is typical for LA infill land
+  const assessedLandVal = parcel.land_value || 0;
+  const estimatedMarketLand = assessedLandVal > 0 ? assessedLandVal * 2.5 : units * 100000;
+  const landPrice = userOverrides.land_price || estimatedMarketLand;
+
+  const opts = {
+    avgUnitSf: userOverrides.avg_unit_size_sf || 850,
+    constructionType: userOverrides.construction_type || 'Type V',
+    rentPerUnit: userOverrides.avg_rent_per_unit_mo || 2800,
+    vacancyPct: userOverrides.vacancy_rate_pct || 5,
+    opexPct: userOverrides.operating_expense_ratio_pct || 35,
+    capRate: userOverrides.cap_rate_exit || 4.5,
+    ltcPct: userOverrides.ltc_pct || 65,
+    interestRate: userOverrides.interest_rate || 6.5,
+    loanTerm: userOverrides.loan_term_years || 30,
+    holdYears: userOverrides.holding_years || 5,
+    permitFees: entitlement.estimated_permit_fees || 8500 + units * 1500,
+  };
+
+  const targetIRR = userOverrides.target_irr || 20;
+  const base = _computeProForma(landPrice, units, opts);
+
+  // Solve max land price at target IRR (binary search)
+  let lo = 0, hi = landPrice * 5;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const r = _computeProForma(mid, units, opts);
+    if (r.irr_levered >= targetIRR) lo = mid; else hi = mid;
+    if (hi - lo < 1000) break;
+  }
+  const maxLandPrice = Math.round(lo / 1000) * 1000;
+
+  // Deal signal
+  let signal, signalReason;
+  if (base.irr_levered >= targetIRR && landPrice <= maxLandPrice) {
+    signal = 'GO';
+    signalReason = `Levered IRR ${base.irr_levered}% meets ${targetIRR}% target. Land price within model max ($${maxLandPrice.toLocaleString()}).`;
+  } else if (base.irr_levered >= targetIRR * 0.8 || landPrice <= maxLandPrice * 1.15) {
+    signal = 'BORDERLINE';
+    signalReason = `IRR ${base.irr_levered}% below target or land exceeds max by <15%. Negotiate land price or optimize unit mix.`;
+  } else {
+    signal = 'NO-GO';
+    signalReason = `IRR ${base.irr_levered}% well below ${targetIRR}% target. Land ($${landPrice.toLocaleString()}) exceeds max ($${maxLandPrice.toLocaleString()}) by ${Math.round((landPrice/maxLandPrice-1)*100)}%.`;
+  }
+
+  // Sensitivity (3 scenarios)
+  const sensitivity = [
+    { label:'Worst Case', rent_chg:-10, cost_chg:+10 },
+    { label:'Base Case', rent_chg:0, cost_chg:0 },
+    { label:'Best Case', rent_chg:+10, cost_chg:-10 },
+  ].map(s => {
+    const r = _computeProForma(landPrice, units, { ...opts, rentPerUnit: opts.rentPerUnit*(1+s.rent_chg/100) });
+    // Rough cost adjustment by scaling cost_per_unit
+    return { label:s.label, rent_change_pct:s.rent_chg, construction_change_pct:s.cost_chg, irr_levered:r.irr_levered, equity_multiple:r.equity_multiple };
+  });
+
+  return {
+    units_modeled: units,
+    land_price_used: Math.round(landPrice),
+    land_price_source: userOverrides.land_price ? 'User provided' : (assessedLandVal > 0 ? 'LA County Assessor × 2.5x (estimate)' : 'Rule of thumb $100K/unit (verify with broker)'),
+    ...base,
+    max_land_price_at_target_irr: maxLandPrice,
+    max_land_price_per_unit: Math.round(maxLandPrice / units),
+    target_irr: targetIRR,
+    deal_signal: signal,
+    deal_signal_reason: signalReason,
+    sensitivity,
+    construction_type: opts.constructionType,
+    avg_rent_per_unit_mo: opts.rentPerUnit,
+    assumptions: [
+      `Construction: ${opts.constructionType} @ $${HARD_COST_PER_SF[opts.constructionType]}/sf (LA 2025/2026 estimate)`,
+      `Rent: $${opts.rentPerUnit}/unit/mo — verify with local broker`,
+      `Financing: ${opts.ltcPct}% LTC @ ${opts.interestRate}% / ${opts.loanTerm}yr`,
+      `Exit: ${opts.capRate}% cap rate after ${opts.holdYears}-year hold`,
+      'All figures are estimates — not a substitute for licensed contractor bids or appraisal',
+    ],
+    confidence: userOverrides.land_price && userOverrides.avg_rent_per_unit_mo ? 'HIGH' : userOverrides.land_price ? 'MEDIUM' : 'LOW',
+    development_note: base.irr_levered < 0
+      ? `At estimated land value ($${Math.round(landPrice).toLocaleString()}), this parcel does not support conventional market-rate development at these unit counts. Max supportable land price is $${maxLandPrice.toLocaleString()} at ${targetIRR}% target IRR. For affordable development (ED1/LIHTC stack), run model with land_price override and adjusted rents.`
+      : null,
+  };
 }

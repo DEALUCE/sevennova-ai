@@ -1,10 +1,23 @@
 import { SKILL_PROMPTS, NARRATIVE_PROMPT } from './skill-prompts'
+import { analyzeEntitlement, type EntitlementAnalysis } from './entitlement'
+import { runProfitModel, type ProfitModel } from './profit-model'
 import { fetchZoning, type ZimasResult } from './zimas'
 import { sendEmail } from './agents/resend'
 import { storeAuditRecord } from './audit'
 import { fetchTOCTier } from './toc'
 import { fetchSeismic } from './seismic'
 import { collectSourceRegistry, type SourceResult } from './sources/adapter'
+import { fetchRSO } from './rso'
+import { fetchElevation } from './elevation'
+import { fetchTransit } from './metro'
+import { fetchAmenities } from './osm'
+import { fetchEnviroScreen } from './enviroscreen'
+import { fetchEPAEcho } from './epa'
+import { fetchUnemployment } from './bls'
+import { fetchBEA } from './bea'
+import { fetchOverlays, computeEntitlementEligibility } from './overlays'
+import { fetchHUDFMR } from './hud'
+import { fetchCensusACS } from './census'
 
 export interface Env {
   ANTHROPIC_API_KEY: string
@@ -17,8 +30,13 @@ export interface Env {
   DEV_MODE?: string
   OLLAMA_URL?: string
   RESEND_API_KEY: string
-  ADMIN_SECRET?: string          // Phase 4 — set via: wrangler secret put ADMIN_SECRET
-  GOOGLE_MAPS_API_KEY?: string   // Phase 2 — optional Street View on PDF cover; wrangler secret put GOOGLE_MAPS_API_KEY
+  ADMIN_SECRET?: string
+  GOOGLE_MAPS_API_KEY?: string
+  HUD_API_KEY?: string           // Free key from huduser.gov — wrangler secret put HUD_API_KEY
+  CENSUS_API_KEY?: string        // Free key from api.census.gov — wrangler secret put CENSUS_API_KEY
+  SOCRATA_APP_TOKEN?: string     // data.lacity.org app token — wrangler secret put SOCRATA_APP_TOKEN
+  BLS_API_KEY?: string           // Free key from bls.gov — wrangler secret put BLS_API_KEY
+  BEA_API_KEY?: string           // Free key from apps.bea.gov — wrangler secret put BEA_API_KEY
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   SEVENNOVA_KEYS: any
 }
@@ -64,6 +82,8 @@ export interface PropertyReport {
   distress?: DistressResult
   climate?: ClimateResult
   entitlement?: EntitlementResult
+  entitlement_detailed?: EntitlementAnalysis
+  profit_model_data?: ProfitModel
   executive_summary: string
   investment_thesis: string
   risk_summary: string
@@ -76,6 +96,100 @@ export interface PropertyReport {
   cache_hit: boolean
   source_registry?: SourceResult[]
   manual_review_required?: boolean
+  parcel_verified?: {
+    elevation_ft: number | null
+    transit_nearest_rail_mi: number | null
+    transit_nearest_rail_name: string | null
+    transit_score: number | null
+    rso_in_area: boolean | null
+    rso_label: string | null
+    rso_status: string
+    walkability_score: number | null
+    walk_grocery_half_mi: number | null
+    walk_restaurant_quarter_mi: number | null
+    walk_park_quarter_mi: number | null
+    walk_status: string
+    enviro_ci_percentile: number | null
+    enviro_pollution_percentile: number | null
+    enviro_poverty_percentile: number | null
+    enviro_diesel_percentile: number | null
+    enviro_census_tract: string | null
+    enviro_status: string
+    epa_facilities_half_mi: number | null
+    epa_rcra_hazwaste: number | null
+    epa_significant_violators: number | null
+    epa_current_violations: number | null
+    epa_total_penalties_usd: number | null
+    epa_status: string
+    seismic_risk_label: string | null
+    seismic_risk_score: number | null
+    // LADBS rich permit data
+    permits_5yr: number | null
+    permit_types: string | null
+    permit_total_valuation_usd: number | null
+    permit_has_new_construction: boolean | null
+    permit_has_demolition: boolean | null
+    permit_most_recent_date: string | null
+    permits_status: string
+    bls_unemployment_rate: number | null
+    bls_unemployment_month: string | null
+    bls_cpi_value: number | null
+    bls_cpi_month: string | null
+    bls_cpi_change_1yr: number | null
+    bls_nonfarm_employment_thousands: number | null
+    bls_employment_month: string | null
+    bls_api_tier: string | null
+    bls_status: string
+    bls_error: string | null
+    // BEA — LA County GDP + personal income
+    bea_personal_income_millions: number | null
+    bea_personal_income_year: string | null
+    bea_per_capita_income: number | null
+    bea_per_capita_year: string | null
+    bea_per_capita_change_1yr_pct: number | null
+    bea_real_gdp_millions: number | null
+    bea_gdp_year: string | null
+    bea_gdp_change_1yr_pct: number | null
+    bea_status: string
+    bea_error: string | null
+    community_plan_area: string | null
+    council_district: number | null
+    council_member: string | null
+    overlays_status: string
+    // Phase 3 — Seismic hazard overlays
+    in_liquefaction_zone: boolean | null
+    in_landslide_area: boolean | null
+    geo_hazard_status: string
+    // Phase 3 — Entitlement eligibility (zone-computed)
+    ed1_eligible: boolean
+    ed1_note: string
+    sb9_eligible: boolean | null
+    sb9_note: string
+    ab2011_eligible: boolean | null
+    ab2011_note: string
+    hud_fmr_studio: number | null
+    hud_fmr_1br: number | null
+    hud_fmr_2br: number | null
+    hud_fmr_3br: number | null
+    hud_fmr_4br: number | null
+    hud_fmr_year: string | null
+    hud_fmr_status: string
+    // Census ACS expanded
+    census_tract: string | null
+    census_median_income: number | null
+    census_poverty_rate_pct: number | null
+    census_total_housing_units: number | null
+    census_owner_occupied_pct: number | null
+    census_renter_occupied_pct: number | null
+    census_median_gross_rent: number | null
+    census_rent_burden_severe_pct: number | null
+    census_total_population: number | null
+    census_median_age: number | null
+    census_college_degree_pct: number | null
+    census_unemployment_rate_pct: number | null
+    census_acs_year: string | null
+    census_status: string
+  }
 }
 
 export interface Address {
@@ -255,7 +369,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     }),
@@ -343,22 +457,74 @@ Label uncertain data as UNVERIFIED. Include confidence scores (0-100). Never hal
 
 // ── FREE DATA FETCHERS ────────────────────────────────────────────────────────
 
-async function fetchAssessor(street: string, _city: string, zipCode?: string) {
+// ── LA COUNTY ASSESSOR ───────────────────────────────────────────────────────
+// Primary: LA County GIS parcel ArcGIS layer (spatial query by lat/lon from ZIMAS)
+// Fallback: address-based Socrata query on LA County Open Data
+// The old undocumented assessor.lacounty.gov endpoint returned null for ~90% of addresses.
+
+const ASSESSOR_ARCGIS = 'https://mapping.gis.lacounty.gov/arcgis/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query'
+const ASSESSOR_SOCRATA = 'https://data.lacounty.gov/resource/9trm-uz8i.json'
+
+async function fetchAssessorByCoords(lat: number, lon: number) {
   try {
-    const q = encodeURIComponent(`${street}${zipCode ? ' ' + zipCode : ''}`)
-    const res = await fetch(
-      `https://assessor.lacounty.gov/api/assessor/parcel/search?address=${q}&limit=1`,
-      { headers: { Accept: 'application/json' } },
-    )
+    const params = new URLSearchParams({
+      geometry: `${lon},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      distance: '75',
+      units: 'esriSRUnit_Foot',
+      outFields: 'AIN,SitusAddress,SitusCity,SitusZip,LotSqFt,LotAcres,UseType,UseCode,YearBuilt,EffectiveYear,SQFTmain,Units,Bedrooms,Bathrooms,RecordDate,SaleAmount',
+      returnGeometry: 'false',
+      f: 'json',
+    })
+    const res = await fetch(`${ASSESSOR_ARCGIS}?${params}`, { headers: { Accept: 'application/json' } })
     if (!res.ok) return null
-    const data = await res.json() as { results?: Array<Record<string, unknown>> }
-    const p = data.results?.[0]
+    const data = await res.json() as { features?: Array<{ attributes: Record<string, unknown> }> }
+    const p = data.features?.[0]?.attributes
     if (!p) return null
+    const lotSf = p.LotSqFt ? Number(p.LotSqFt) : (p.LotAcres ? Math.round(Number(p.LotAcres) * 43560) : null)
     return {
-      lot_size_sf: p.LotSizeSqFt ?? p.lot_size_sqft ?? null,
-      year_built: p.YearBuilt ?? p.year_built ?? null,
-      last_sale_price: p.LastSaleAmount ?? p.sale_price ?? null,
-      last_sale_date: p.LastSaleDate ?? p.sale_date ?? null,
+      apn: String(p.AIN ?? ''),
+      lot_size_sf: lotSf && lotSf > 0 ? lotSf : null,
+      year_built: p.YearBuilt ? Number(p.YearBuilt) : null,
+      units: p.Units ? Number(p.Units) : null,
+      use_code: p.UseCode ?? null,
+      use_type: p.UseType ?? null,
+      sqft_main: p.SQFTmain ? Number(p.SQFTmain) : null,
+      last_sale_price: p.SaleAmount ? Number(p.SaleAmount) : null,
+      last_sale_date: p.RecordDate ? String(p.RecordDate) : null,
+    }
+  } catch { return null }
+}
+
+async function fetchAssessor(street: string, _city: string, zipCode?: string, lat?: number, lon?: number) {
+  // Primary: spatial query if we have coordinates (more accurate)
+  if (lat && lon) {
+    const result = await fetchAssessorByCoords(lat, lon)
+    if (result) return result
+  }
+
+  // Fallback: Socrata address-based query on LA County Open Data
+  try {
+    const q = encodeURIComponent(street.toUpperCase())
+    const url = `${ASSESSOR_SOCRATA}?$where=upper(situs_address)%20like%20'${q}%25'${zipCode ? `%20AND%20situs_zip='${zipCode}'` : ''}&$limit=1`
+    const res = await fetch(url, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return null
+    const data = await res.json() as Array<Record<string, unknown>>
+    const p = data?.[0]
+    if (!p) return null
+    const lotSf = p.lot_size_sqft ? Number(p.lot_size_sqft) : null
+    return {
+      apn: String(p.ain ?? p.apn ?? ''),
+      lot_size_sf: lotSf && lotSf > 0 ? lotSf : null,
+      year_built: p.year_built ? Number(p.year_built) : null,
+      units: p.units ? Number(p.units) : null,
+      use_code: p.use_code ?? null,
+      use_type: p.use_type ?? null,
+      sqft_main: p.sqft_main ? Number(p.sqft_main) : null,
+      last_sale_price: p.sale_amount ? Number(p.sale_amount) : null,
+      last_sale_date: p.record_date ? String(p.record_date) : null,
     }
   } catch { return null }
 }
@@ -376,22 +542,72 @@ function parseStreetParts(street: string): { houseNum: string; streetName: strin
   return { houseNum, streetName: tokens.join(' ') || (parts[1]?.toUpperCase() ?? '') }
 }
 
-async function fetchLADBS(street: string, _zipCode?: string) {
+async function fetchLADBS(street: string, _zipCode?: string, socrataToken?: string) {
   try {
     const { houseNum, streetName } = parseStreetParts(street)
-    const permitUrl = houseNum
-      ? `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&address_start=${encodeURIComponent(houseNum)}&$limit=50`
-      : `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&$limit=50`
+
+    // Existing violations
     const violationUrl = `https://data.lacity.org/resource/u82d-eh7z.json?stname=${encodeURIComponent(streetName)}&$limit=50`
-    const [permitsRes, violationsRes] = await Promise.all([
-      fetch(permitUrl, { headers: { Accept: 'application/json' } }),
-      fetch(violationUrl, { headers: { Accept: 'application/json' } }),
+
+    // Rich permit data from hbkd-qubn (confirmed working, simple URL params)
+    const fiveyrsAgo = new Date(Date.now() - 5 * 365.25 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+    const richUrl = houseNum
+      ? `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&address_start=${encodeURIComponent(houseNum)}&$limit=100&$order=issue_date DESC`
+      : `https://data.lacity.org/resource/hbkd-qubn.json?street_name=${encodeURIComponent(streetName)}&$limit=100&$order=issue_date DESC`
+
+    const socrataHeaders: Record<string, string> = { Accept: 'application/json' }
+    if (socrataToken) socrataHeaders['X-App-Token'] = socrataToken
+
+    const [richRes, violationsRes] = await Promise.all([
+      fetch(richUrl, { headers: socrataHeaders }),
+      fetch(violationUrl, { headers: socrataHeaders }),
     ])
-    const permits = permitsRes.ok ? await permitsRes.json() as Array<Record<string, unknown>> : []
+
+    const richPermits = richRes.ok ? await richRes.json() as Array<Record<string, unknown>> : []
     const violations = violationsRes.ok ? await violationsRes.json() as Array<Record<string, unknown>> : []
-    // u82d-eh7z: stat='O' means open/active
+
+    // Violations — stat='O' = open/active
     const active = violations.filter(r => String(r.stat ?? '').toUpperCase() === 'O')
-    return { active_violations: active.length, permit_count: permits.length, violation_count: violations.length }
+
+    // Rich permit analysis
+    const recent5yr = richPermits.filter(p => {
+      const d = String(p.issue_date ?? '')
+      return d >= fiveyrsAgo
+    })
+
+    // Permit types found (e.g. "Building, Plumbing, Electrical")
+    const typeSet = new Set(richPermits.map(p => String(p.permit_type ?? '').trim()).filter(Boolean))
+    const permitTypes = [...typeSet].join(', ') || null
+
+    // Total valuation across all permits
+    const totalValuation = richPermits.reduce((sum, p) => {
+      const v = parseFloat(String(p.valuation ?? '0').replace(/[$,]/g, ''))
+      return sum + (isFinite(v) ? v : 0)
+    }, 0)
+
+    // New construction / demolition flags — from permit_type + permit_sub_type
+    const allTypes = richPermits.map(p =>
+      `${String(p.permit_type ?? '')} ${String(p.permit_sub_type ?? '')}`.toUpperCase()
+    )
+    const hasNewConst = allTypes.some(t => t.includes('NEW') || t.includes('ADDITION'))
+    const hasDemolition = allTypes.some(t => t.includes('DEMO'))
+
+    // Most recent permit date
+    const mostRecent = richPermits[0]?.issue_date ? String(richPermits[0].issue_date).slice(0, 10) : null
+
+    return {
+      active_violations: active.length,
+      permit_count: richPermits.length,
+      violation_count: violations.length,
+      // Rich fields
+      permits_5yr: recent5yr.length,
+      permit_types: permitTypes,
+      permit_total_valuation_usd: Math.round(totalValuation),
+      permit_has_new_construction: hasNewConst,
+      permit_has_demolition: hasDemolition,
+      permit_most_recent_date: mostRecent,
+      permits_status: richPermits.length > 0 ? 'VERIFIED' : 'UNAVAILABLE',
+    }
   } catch { return null }
 }
 
@@ -440,29 +656,11 @@ async function geocodeToTract(lat: number, lon: number): Promise<{ state: string
   } catch { return null }
 }
 
-async function fetchCensus(lat: number, lon: number) {
+async function fetchCensus(lat: number, lon: number, apiKey?: string) {
   try {
     const tractInfo = await geocodeToTract(lat, lon)
     if (!tractInfo) return null
-    // CensusReporter: keyless API — returns ACS5 B19013 (median income) and B25070 (rent burden)
-    const geoId = `14000US${tractInfo.geoid}`
-    const res = await fetch(
-      `https://api.censusreporter.org/1.0/data/show/latest?table_ids=B19013,B25070&geo_ids=${geoId}`,
-    )
-    if (!res.ok) return null
-    const data = await res.json() as {
-      data?: Record<string, {
-        B19013?: { estimate?: { B19013001?: number } }
-        B25070?: { estimate?: { B25070010?: number } }
-      }>
-    }
-    const row = data.data?.[geoId]
-    if (!row) return null
-    return {
-      median_income: row.B19013?.estimate?.B19013001 ?? null,
-      rent_burden_severe_pct: row.B25070?.estimate?.B25070010 ?? null,
-      census_tract: tractInfo.geoid,
-    }
+    return await fetchCensusACS(tractInfo.state, tractInfo.county, tractInfo.tract, tractInfo.geoid, apiKey)
   } catch { return null }
 }
 
@@ -537,35 +735,62 @@ export async function generateReport(
 
   if (!cacheHit) {
     // Phase 1: ZIMAS first — provides lat/lon for geo-dependent fetchers
-    const [zimasResult, assessorResult] = await Promise.allSettled([
-      fetchZoning(street, city, state, zipCode),
-      fetchAssessor(street, city, zipCode),
-    ])
-    const zimasPhase1: ZimasResult | null = zimasResult.status === 'fulfilled' ? zimasResult.value : null
+    const zimasResult = await Promise.allSettled([fetchZoning(street, city, state, zipCode)])
+    const zimasPhase1: ZimasResult | null = zimasResult[0].status === 'fulfilled' ? zimasResult[0].value : null
     const lat = zimasPhase1?.lat ?? 34.0522
     const lon = zimasPhase1?.lon ?? -118.2437
 
     // Phase 2: All geo-dependent fetchers in parallel using resolved lat/lon
-    const [ladbsResult, femaResult, calfireResult, censusResult, hudResult, tocResult, seismicResult] =
+    // Assessor now uses lat/lon (spatial query) as primary, address as fallback
+    const [
+      assessorResult, ladbsResult, femaResult, calfireResult, censusResult,
+      hudResult, tocResult, seismicResult,
+      rsoResult, elevationResult, transitResult, amenitiesResult,
+      enviroScreenResult, epaEchoResult,
+      blsResult, overlaysResult, hudFmrResult, beaResult,
+    ] =
       await Promise.allSettled([
-        fetchLADBS(street, zipCode),
+        fetchAssessor(street, city, zipCode, lat, lon),
+        fetchLADBS(street, zipCode, env.SOCRATA_APP_TOKEN),
         fetchFEMA(lat, lon),
         fetchCalFire(lat, lon),
-        fetchCensus(lat, lon),
+        fetchCensus(lat, lon, env.CENSUS_API_KEY),
         fetchHUD(lat, lon),
-        fetchTOCTier(lat, lon),    // Quick win 2 — LA City GIS TOC layer
-        fetchSeismic(lat, lon),    // Quick win 4 — USGS ShakeMap
+        fetchTOCTier(lat, lon),
+        fetchSeismic(lat, lon),
+        fetchRSO(lat, lon),
+        fetchElevation(lat, lon),
+        fetchTransit(lat, lon),
+        fetchAmenities(lat, lon),
+        fetchEnviroScreen(lat, lon),
+        fetchEPAEcho(lat, lon),
+        fetchUnemployment(env.BLS_API_KEY),
+        fetchOverlays(lat, lon),
+        fetchHUDFMR(env.HUD_API_KEY),
+        fetchBEA(env.BEA_API_KEY),
       ])
 
     const zimas: ZimasResult | null = zimasPhase1
     const assessor = assessorResult.status === 'fulfilled' ? assessorResult.value : null
     const ladbs = ladbsResult.status === 'fulfilled' ? ladbsResult.value : null
+    // Wire APN from assessor into address if not provided by user
+    if (assessor?.apn && !apn) apn = assessor.apn
     const fema = femaResult.status === 'fulfilled' ? femaResult.value : null
     const calfire = calfireResult.status === 'fulfilled' ? calfireResult.value : null
     const census = censusResult.status === 'fulfilled' ? censusResult.value : null
     const hud = hudResult.status === 'fulfilled' ? hudResult.value : null
     const toc = tocResult.status === 'fulfilled' ? tocResult.value : null
     const seismic = seismicResult.status === 'fulfilled' ? seismicResult.value : null
+    const rso = rsoResult.status === 'fulfilled' ? rsoResult.value : null
+    const elevation = elevationResult.status === 'fulfilled' ? elevationResult.value : null
+    const transit = transitResult.status === 'fulfilled' ? transitResult.value : null
+    const amenities = amenitiesResult.status === 'fulfilled' ? amenitiesResult.value : null
+    const enviroScreen = enviroScreenResult.status === 'fulfilled' ? enviroScreenResult.value : null
+    const epaEcho = epaEchoResult.status === 'fulfilled' ? epaEchoResult.value : null
+    const bls = blsResult.status === 'fulfilled' ? blsResult.value : null
+    const overlays = overlaysResult.status === 'fulfilled' ? overlaysResult.value : null
+    const hudFmr = hudFmrResult.status === 'fulfilled' ? hudFmrResult.value : null
+    const bea = beaResult.status === 'fulfilled' ? beaResult.value : null
 
     // Quick win 1 — Buildable SF + Max Units: pure math from ZIMAS FAR × Assessor lot size
     // Status VERIFIED only when both source values are confirmed live data
@@ -616,12 +841,19 @@ export async function generateReport(
       zimas_max_far: zimas?.max_far ?? null,
       zimas_height_limit_ft: zimas?.height_limit_ft ?? null,
       zimas_height_limit_stories: zimas?.height_limit_stories ?? null,
+      zimas_hpoz_name: zimas?.hpoz_name ?? null,
       zimas_lat: zimas?.lat ?? null,
       zimas_lon: zimas?.lon ?? null,
       zimas_source: zimas?.error ? `ZIMAS_ERROR: ${zimas.error}` : (zimas ? 'LA_CITY_ZIMAS_LIVE' : 'UNAVAILABLE'),
       freshness: zimas && !zimas.error ? 'LA_CITY_LIVE' : 'UNVERIFIED',
       confidence: zimas && !zimas.error ? 90 : 0,
+      // Assessor — now from LA County GIS ArcGIS spatial query (primary) or Socrata (fallback)
+      // apn already set above (line 663) — assessor may have enriched it via the APN reassignment above
       lot_size_sf: assessor?.lot_size_sf ?? null,
+      units: assessor?.units ?? null,
+      use_code: assessor?.use_code ?? null,
+      use_type: assessor?.use_type ?? null,
+      sqft_main: assessor?.sqft_main ?? null,
       year_built: assessor?.year_built ?? null,
       last_sale_price: assessor?.last_sale_price ?? null,
       last_sale_date: assessor?.last_sale_date ?? null,
@@ -629,14 +861,34 @@ export async function generateReport(
       ladbs_active_violations: ladbs?.active_violations ?? null,
       ladbs_permit_count: ladbs?.permit_count ?? null,
       ladbs_source: ladbs ? 'LADBS_LIVE' : 'UNAVAILABLE',
+      // Rich permit fields
+      ladbs_permits_5yr: ladbs?.permits_5yr ?? null,
+      ladbs_permit_types: ladbs?.permit_types ?? null,
+      ladbs_permit_total_valuation_usd: ladbs?.permit_total_valuation_usd ?? null,
+      ladbs_permit_has_new_construction: ladbs?.permit_has_new_construction ?? null,
+      ladbs_permit_has_demolition: ladbs?.permit_has_demolition ?? null,
+      ladbs_permit_most_recent_date: ladbs?.permit_most_recent_date ?? null,
+      ladbs_permits_status: ladbs?.permits_status ?? 'UNAVAILABLE',
       fema_flood_zone: fema?.flood_zone ?? null,
       fema_source: fema ? 'FEMA_LIVE' : 'UNAVAILABLE',
       fire_hazard_zone: calfire?.fire_hazard_zone ?? null,
       calfire_source: calfire ? 'CALFIRE_LIVE' : 'UNAVAILABLE',
-      census_median_income: census?.median_income ?? null,
+      census_median_income: census?.median_household_income ?? (census as { median_income?: number | null } | null)?.median_income ?? null,
       census_rent_burden: census?.rent_burden_severe_pct ?? null,
       census_tract: census?.census_tract ?? null,
-      census_source: census ? 'CENSUS_ACS_LIVE' : 'UNAVAILABLE',
+      census_source: census?.status === 'VERIFIED' ? 'CENSUS_ACS_LIVE' : (census?.status === 'PARTIAL' ? 'CENSUS_ACS_PARTIAL' : 'UNAVAILABLE'),
+      // Census ACS expanded fields
+      census_poverty_rate_pct: census?.poverty_rate_pct ?? null,
+      census_total_housing_units: census?.total_housing_units ?? null,
+      census_owner_occupied_pct: census?.owner_occupied_pct ?? null,
+      census_renter_occupied_pct: census?.renter_occupied_pct ?? null,
+      census_median_gross_rent: census?.median_gross_rent ?? null,
+      census_total_population: census?.total_population ?? null,
+      census_median_age: census?.median_age ?? null,
+      census_college_degree_pct: census?.college_degree_pct ?? null,
+      census_unemployment_rate_pct: census?.unemployment_rate_pct ?? null,
+      census_acs_year: census?.acs_year ?? null,
+      census_status: census?.status ?? 'UNAVAILABLE',
       opportunity_zone: hud?.opportunity_zone ?? null,
       hud_source: hud ? 'HUD_LIVE' : 'UNAVAILABLE',
       // Quick win 2 — TOC Tier (LA City GIS)
@@ -661,6 +913,107 @@ export async function generateReport(
       max_units_by_right_calc: maxUnitsByRightCalc,
       max_units_toc_calc: maxUnitsTOCCalc,
       derived_fields_status: (zimasFar !== null && lotSizeSf !== null) ? 'VERIFIED_CALCULATED' : 'UNAVAILABLE',
+      // Phase 1 new connectors
+      rso_in_area: rso?.in_rso_area ?? null,
+      rso_label: rso?.rso_label ?? null,
+      rso_status: rso?.status ?? 'UNAVAILABLE',
+      rso_source: rso?.status === 'VERIFIED' ? 'LA_CITY_RSO_LIVE' : 'UNAVAILABLE',
+      elevation_ft: elevation?.elevation_ft ?? null,
+      elevation_status: elevation?.status ?? 'UNAVAILABLE',
+      elevation_source: elevation?.status === 'VERIFIED' ? 'USGS_EPQS_LIVE' : 'UNAVAILABLE',
+      transit_nearest_rail_mi: transit?.nearest_rail_mi ?? null,
+      transit_nearest_rail_name: transit?.nearest_rail_name ?? null,
+      transit_nearest_bus_mi: transit?.nearest_bus_mi ?? null,
+      transit_bus_stops_quarter_mi: transit?.bus_stops_within_quarter_mi ?? null,
+      transit_score: transit?.transit_score ?? null,
+      transit_status: transit?.status ?? 'UNAVAILABLE',
+      transit_source: transit?.status === 'VERIFIED' ? (transit.source === 'LA_METRO_STATIC' ? 'LA_METRO_STATIC_LIVE' : 'OSM_OVERPASS_LIVE') : 'UNAVAILABLE',
+      walk_grocery_half_mi: amenities?.grocery_within_half_mi ?? null,
+      walk_pharmacy_quarter_mi: amenities?.pharmacy_within_quarter_mi ?? null,
+      walk_school_half_mi: amenities?.school_within_half_mi ?? null,
+      walk_park_quarter_mi: amenities?.park_within_quarter_mi ?? null,
+      walk_restaurant_quarter_mi: amenities?.restaurant_within_quarter_mi ?? null,
+      walkability_score: amenities?.walkability_score ?? null,
+      walk_status: amenities?.status ?? 'UNAVAILABLE',
+      walk_source: amenities?.status === 'VERIFIED' ? 'OSM_OVERPASS_LIVE' : 'UNAVAILABLE',
+      enviro_census_tract: enviroScreen?.census_tract ?? null,
+      enviro_ci_percentile: enviroScreen?.ci_score_percentile ?? null,
+      enviro_pollution_percentile: enviroScreen?.pollution_percentile ?? null,
+      enviro_pop_char_percentile: enviroScreen?.pop_char_percentile ?? null,
+      enviro_diesel_percentile: enviroScreen?.diesel_percentile ?? null,
+      enviro_traffic_percentile: enviroScreen?.traffic_percentile ?? null,
+      enviro_poverty_percentile: enviroScreen?.poverty_percentile ?? null,
+      enviro_status: enviroScreen?.status ?? 'UNAVAILABLE',
+      enviro_source: enviroScreen?.status === 'VERIFIED' ? 'CALENVIROSCREEN_4_LIVE' : 'UNAVAILABLE',
+      epa_facilities_half_mi: epaEcho?.total_facilities ?? null,
+      epa_rcra_hazwaste: epaEcho?.rcra_hazardous_waste ?? null,
+      epa_significant_violators: epaEcho?.significant_violators ?? null,
+      epa_current_violations: epaEcho?.current_violations ?? null,
+      epa_total_penalties_usd: epaEcho?.total_penalties_usd ?? null,
+      epa_status: epaEcho?.status ?? 'UNAVAILABLE',
+      epa_source: epaEcho?.status === 'VERIFIED' ? 'EPA_ECHO_LIVE' : 'UNAVAILABLE',
+      // BLS — unemployment + CPI + employment (v2 with key, v1 without)
+      bls_unemployment_rate: bls?.unemployment_rate_pct ?? null,
+      bls_unemployment_month: bls?.unemployment_month ?? null,
+      bls_cpi_value: bls?.cpi_value ?? null,
+      bls_cpi_month: bls?.cpi_month ?? null,
+      bls_cpi_change_1yr: bls?.cpi_change_1yr ?? null,
+      bls_nonfarm_employment_thousands: bls?.nonfarm_employment_thousands ?? null,
+      bls_employment_month: bls?.employment_month ?? null,
+      bls_api_tier: bls?.api_tier ?? null,
+      bls_status: bls?.status ?? 'UNAVAILABLE',
+      bls_error: bls?.error ?? null,
+      bls_source: bls?.status === 'VERIFIED' ? 'BLS_LAUS_LIVE' : 'UNAVAILABLE',
+      // BEA — per capita income + GDP (LA County)
+      bea_personal_income_millions: bea?.personal_income_millions ?? null,
+      bea_personal_income_year: bea?.personal_income_year ?? null,
+      bea_per_capita_income: bea?.per_capita_income ?? null,
+      bea_per_capita_year: bea?.per_capita_year ?? null,
+      bea_per_capita_change_1yr_pct: bea?.per_capita_change_1yr_pct ?? null,
+      bea_real_gdp_millions: bea?.real_gdp_millions ?? null,
+      bea_gdp_year: bea?.gdp_year ?? null,
+      bea_gdp_change_1yr_pct: bea?.gdp_change_1yr_pct ?? null,
+      bea_status: bea?.status ?? 'UNAVAILABLE',
+      bea_error: bea?.error ?? null,
+      bea_source: bea?.status === 'VERIFIED' ? 'BEA_REGIONAL_LIVE' : 'UNAVAILABLE',
+      // Phase 2 — Community Plan + Council District
+      community_plan_area: overlays?.community_plan_area ?? null,
+      community_plan_num: overlays?.community_plan_num ?? null,
+      council_district: overlays?.council_district ?? null,
+      council_member: overlays?.council_member ?? null,
+      council_district_label: overlays?.council_district_label ?? null,
+      overlays_status: overlays?.status ?? 'UNAVAILABLE',
+      overlays_source: overlays?.status === 'VERIFIED' ? 'LA_CITY_OVERLAYS_LIVE' : 'UNAVAILABLE',
+      // Phase 3 — seismic hazard
+      in_liquefaction_zone: overlays?.in_liquefaction_zone ?? null,
+      in_landslide_area: overlays?.in_landslide_area ?? null,
+      geo_hazard_status: overlays?.geo_hazard_status ?? 'UNAVAILABLE',
+      // Phase 3 — entitlement eligibility (zone-computed)
+      ...(() => {
+        const ent = computeEntitlementEligibility(
+          zimas?.zone_class ?? null,
+          zimas?.hpoz_name ?? null,
+          overlays?.in_liquefaction_zone ?? null,
+          overlays?.in_landslide_area ?? null,
+        )
+        return {
+          ed1_eligible: ent.ed1_eligible,
+          ed1_note: ent.ed1_note,
+          sb9_eligible: ent.sb9_eligible,
+          sb9_note: ent.sb9_note,
+          ab2011_eligible: ent.ab2011_eligible,
+          ab2011_note: ent.ab2011_note,
+        }
+      })(),
+      // Phase 2 — HUD FMR
+      hud_fmr_studio: hudFmr?.fmr_studio ?? null,
+      hud_fmr_1br: hudFmr?.fmr_1br ?? null,
+      hud_fmr_2br: hudFmr?.fmr_2br ?? null,
+      hud_fmr_3br: hudFmr?.fmr_3br ?? null,
+      hud_fmr_4br: hudFmr?.fmr_4br ?? null,
+      hud_fmr_year: hudFmr?.fiscal_year ?? null,
+      hud_fmr_status: hudFmr?.status ?? 'UNAVAILABLE',
+      hud_fmr_source: hudFmr?.status === 'VERIFIED' ? 'HUD_FMR_LIVE' : (hudFmr ? 'HUD_FMR_STATIC' : 'UNAVAILABLE'),
     }
 
     if (env.SEVENNOVA_KEYS) {
@@ -688,6 +1041,7 @@ export async function generateReport(
         max_far: parcelData.zimas_max_far as number | null,
         height_limit_ft: parcelData.zimas_height_limit_ft as number | null,
         height_limit_stories: parcelData.zimas_height_limit_stories as number | null,
+        hpoz_name: parcelData.zimas_hpoz_name as string | null,
         raw: {},
       } : null,
       ladbs: parcelData.ladbs_source === 'LADBS_LIVE' ? {
@@ -934,6 +1288,43 @@ export async function generateReport(
 
   const generationTime = (Date.now() - start) / 1000
 
+  // ── Detailed entitlement analysis + developer profit model ─────────────────
+  const entitlementDetailed = (() => {
+    try {
+      const elig = {
+        zone: String(parcelData.zimas_zone_class ?? ''),
+        lot_size_sf: Number(parcelData.lot_size_sf ?? 0),
+        toc_tier: Number(parcelData.toc_tier ?? 0),
+        ed1_eligible: Boolean(parcelData.ed1_eligible ?? true),
+        sb9_eligible: (parcelData.sb9_eligible as boolean | null) ?? null,
+        ab2011_eligible: (parcelData.ab2011_eligible as boolean | null) ?? null,
+        in_hpoz: !!(parcelData.zimas_hpoz_name as string | null),
+        in_liquefaction_zone: (parcelData.in_liquefaction_zone as boolean | null) ?? null,
+        in_landslide_area: (parcelData.in_landslide_area as boolean | null) ?? null,
+        units_by_right: Number(parcelData.max_units_by_right_calc ?? 0),
+        units_toc_bonus: Math.max(0, Number(parcelData.max_units_toc_calc ?? 0) - Number(parcelData.max_units_by_right_calc ?? 0)),
+        census_median_income: (parcelData.census_median_income as number | null) ?? undefined,
+        near_transit: Number(parcelData.toc_tier ?? 0) >= 1,
+      }
+      return analyzeEntitlement(elig)
+    } catch { return undefined }
+  })()
+
+  const profitModelData = (() => {
+    if (!entitlementDetailed) return undefined
+    try {
+      const recommendedUnits = entitlementDetailed.recommended_path?.max_units ?? 0
+      if (!recommendedUnits) return undefined
+      const landPrice = Number(parcelData.last_sale_price ?? 0) || undefined
+      return runProfitModel({
+        land_price: landPrice ?? (recommendedUnits * 100_000),
+        buildable_units: recommendedUnits,
+        hud_fmr_2br: (parcelData.hud_fmr_2br as number | null) ?? undefined,
+        permit_fees: entitlementDetailed.estimated_permit_fees,
+      })
+    } catch { return undefined }
+  })()
+
   const report: PropertyReport = {
     request_id: requestId,
     address,
@@ -949,6 +1340,8 @@ export async function generateReport(
     distress,
     climate,
     entitlement,
+    entitlement_detailed: entitlementDetailed,
+    profit_model_data: profitModelData,
     executive_summary: String(narrative.executive_summary ?? ''),
     investment_thesis: String(narrative.investment_thesis ?? ''),
     risk_summary: String(narrative.risk_summary ?? ''),
@@ -963,6 +1356,96 @@ export async function generateReport(
     cache_hit: cacheHit,
     source_registry: sourceRegistry,
     manual_review_required: anyManualReview,
+    parcel_verified: {
+      elevation_ft: (parcelData.elevation_ft as number | null) ?? null,
+      transit_nearest_rail_mi: (parcelData.transit_nearest_rail_mi as number | null) ?? null,
+      transit_nearest_rail_name: (parcelData.transit_nearest_rail_name as string | null) ?? null,
+      transit_score: (parcelData.transit_score as number | null) ?? null,
+      rso_in_area: (parcelData.rso_in_area as boolean | null) ?? null,
+      rso_label: (parcelData.rso_label as string | null) ?? null,
+      rso_status: String(parcelData.rso_status ?? 'UNAVAILABLE'),
+      walkability_score: (parcelData.walkability_score as number | null) ?? null,
+      walk_grocery_half_mi: (parcelData.walk_grocery_half_mi as number | null) ?? null,
+      walk_restaurant_quarter_mi: (parcelData.walk_restaurant_quarter_mi as number | null) ?? null,
+      walk_park_quarter_mi: (parcelData.walk_park_quarter_mi as number | null) ?? null,
+      walk_status: String(parcelData.walk_status ?? 'UNAVAILABLE'),
+      enviro_ci_percentile: (parcelData.enviro_ci_percentile as number | null) ?? null,
+      enviro_pollution_percentile: (parcelData.enviro_pollution_percentile as number | null) ?? null,
+      enviro_poverty_percentile: (parcelData.enviro_poverty_percentile as number | null) ?? null,
+      enviro_diesel_percentile: (parcelData.enviro_diesel_percentile as number | null) ?? null,
+      enviro_census_tract: (parcelData.enviro_census_tract as string | null) ?? null,
+      enviro_status: String(parcelData.enviro_status ?? 'UNAVAILABLE'),
+      epa_facilities_half_mi: (parcelData.epa_facilities_half_mi as number | null) ?? null,
+      epa_rcra_hazwaste: (parcelData.epa_rcra_hazwaste as number | null) ?? null,
+      epa_significant_violators: (parcelData.epa_significant_violators as number | null) ?? null,
+      epa_current_violations: (parcelData.epa_current_violations as number | null) ?? null,
+      epa_total_penalties_usd: (parcelData.epa_total_penalties_usd as number | null) ?? null,
+      epa_status: String(parcelData.epa_status ?? 'UNAVAILABLE'),
+      seismic_risk_label: (parcelData.seismic_risk_label as string | null) ?? null,
+      seismic_risk_score: (parcelData.seismic_risk_score as number | null) ?? null,
+      permits_5yr: (parcelData.ladbs_permits_5yr as number | null) ?? null,
+      permit_types: (parcelData.ladbs_permit_types as string | null) ?? null,
+      permit_total_valuation_usd: (parcelData.ladbs_permit_total_valuation_usd as number | null) ?? null,
+      permit_has_new_construction: (parcelData.ladbs_permit_has_new_construction as boolean | null) ?? null,
+      permit_has_demolition: (parcelData.ladbs_permit_has_demolition as boolean | null) ?? null,
+      permit_most_recent_date: (parcelData.ladbs_permit_most_recent_date as string | null) ?? null,
+      permits_status: String(parcelData.ladbs_permits_status ?? 'UNAVAILABLE'),
+      bls_unemployment_rate: (parcelData.bls_unemployment_rate as number | null) ?? null,
+      bls_unemployment_month: (parcelData.bls_unemployment_month as string | null) ?? null,
+      bls_cpi_value: (parcelData.bls_cpi_value as number | null) ?? null,
+      bls_cpi_month: (parcelData.bls_cpi_month as string | null) ?? null,
+      bls_cpi_change_1yr: (parcelData.bls_cpi_change_1yr as number | null) ?? null,
+      bls_nonfarm_employment_thousands: (parcelData.bls_nonfarm_employment_thousands as number | null) ?? null,
+      bls_employment_month: (parcelData.bls_employment_month as string | null) ?? null,
+      bls_api_tier: (parcelData.bls_api_tier as string | null) ?? null,
+      bls_status: String(parcelData.bls_status ?? 'UNAVAILABLE'),
+      bls_error: (parcelData.bls_error as string | null) ?? null,
+      bea_personal_income_millions: (parcelData.bea_personal_income_millions as number | null) ?? null,
+      bea_personal_income_year: (parcelData.bea_personal_income_year as string | null) ?? null,
+      bea_per_capita_income: (parcelData.bea_per_capita_income as number | null) ?? null,
+      bea_per_capita_year: (parcelData.bea_per_capita_year as string | null) ?? null,
+      bea_per_capita_change_1yr_pct: (parcelData.bea_per_capita_change_1yr_pct as number | null) ?? null,
+      bea_real_gdp_millions: (parcelData.bea_real_gdp_millions as number | null) ?? null,
+      bea_gdp_year: (parcelData.bea_gdp_year as string | null) ?? null,
+      bea_gdp_change_1yr_pct: (parcelData.bea_gdp_change_1yr_pct as number | null) ?? null,
+      bea_status: String(parcelData.bea_status ?? 'UNAVAILABLE'),
+      bea_error: (parcelData.bea_error as string | null) ?? null,
+      community_plan_area: (parcelData.community_plan_area as string | null) ?? null,
+      council_district: (parcelData.council_district as number | null) ?? null,
+      council_member: (parcelData.council_member as string | null) ?? null,
+      overlays_status: String(parcelData.overlays_status ?? 'UNAVAILABLE'),
+      in_liquefaction_zone: (parcelData.in_liquefaction_zone as boolean | null) ?? null,
+      in_landslide_area: (parcelData.in_landslide_area as boolean | null) ?? null,
+      geo_hazard_status: String(parcelData.geo_hazard_status ?? 'UNAVAILABLE'),
+      ed1_eligible: Boolean(parcelData.ed1_eligible ?? true),
+      ed1_note: String(parcelData.ed1_note ?? ''),
+      sb9_eligible: (parcelData.sb9_eligible as boolean | null) ?? null,
+      sb9_note: String(parcelData.sb9_note ?? ''),
+      ab2011_eligible: (parcelData.ab2011_eligible as boolean | null) ?? null,
+      ab2011_note: String(parcelData.ab2011_note ?? ''),
+      hud_fmr_studio: (parcelData.hud_fmr_studio as number | null) ?? null,
+      hud_fmr_1br: (parcelData.hud_fmr_1br as number | null) ?? null,
+      hud_fmr_2br: (parcelData.hud_fmr_2br as number | null) ?? null,
+      hud_fmr_3br: (parcelData.hud_fmr_3br as number | null) ?? null,
+      hud_fmr_4br: (parcelData.hud_fmr_4br as number | null) ?? null,
+      hud_fmr_year: (parcelData.hud_fmr_year as string | null) ?? null,
+      hud_fmr_status: String(parcelData.hud_fmr_status ?? 'UNAVAILABLE'),
+      // Census ACS expanded
+      census_tract: (parcelData.census_tract as string | null) ?? null,
+      census_median_income: (parcelData.census_median_income as number | null) ?? null,
+      census_poverty_rate_pct: (parcelData.census_poverty_rate_pct as number | null) ?? null,
+      census_total_housing_units: (parcelData.census_total_housing_units as number | null) ?? null,
+      census_owner_occupied_pct: (parcelData.census_owner_occupied_pct as number | null) ?? null,
+      census_renter_occupied_pct: (parcelData.census_renter_occupied_pct as number | null) ?? null,
+      census_median_gross_rent: (parcelData.census_median_gross_rent as number | null) ?? null,
+      census_rent_burden_severe_pct: (parcelData.census_rent_burden as number | null) ?? null,
+      census_total_population: (parcelData.census_total_population as number | null) ?? null,
+      census_median_age: (parcelData.census_median_age as number | null) ?? null,
+      census_college_degree_pct: (parcelData.census_college_degree_pct as number | null) ?? null,
+      census_unemployment_rate_pct: (parcelData.census_unemployment_rate_pct as number | null) ?? null,
+      census_acs_year: (parcelData.census_acs_year as string | null) ?? null,
+      census_status: String(parcelData.census_status ?? 'UNAVAILABLE'),
+    },
   }
 
   if (env.SEVENNOVA_KEYS) {

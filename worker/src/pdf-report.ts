@@ -211,6 +211,19 @@ class Writer {
     this.text(str, { indent, size: 9, color: C_DARK, maxW: CONTENT_W - indent })
   }
 
+  // Simple multi-column row (no DataPoint wrapping) — for pro forma tables
+  simpleRow(cols: string[], xs: number[]) {
+    this.ensure(16)
+    if (this.pageNum % 2 === 0) {
+      this.page.drawRectangle({ x: MARGIN, y: this.y - 3, width: CONTENT_W, height: 14, color: rgb(0.975, 0.977, 0.980), opacity: 0.5 })
+    }
+    for (let i = 0; i < cols.length; i++) {
+      const isFirst = i === 0
+      this.page.drawText(cols[i].slice(0, 38), { x: MARGIN + xs[i], y: this.y, size: 8.5, font: isFirst ? this.bold : this.reg, color: C_DARK })
+    }
+    this.y -= 15
+  }
+
   // Key-value pair for cover / summary info
   kv(label: string, value: string, valueColor = C_DARK) {
     this.ensure(16)
@@ -591,6 +604,126 @@ export async function generatePDFReport(
     } else {
       w.text('IRR impact and carry cost: suppressed — not verified against primary source. (Phase 0 rule)', { size: 7.5, color: C_GRAY })
     }
+    w.gap(8)
+  }
+
+  // ── ENTITLEMENT STRATEGY (detailed pathways) ──────────────────────────────
+  if (report.entitlement_detailed) {
+    const ed = report.entitlement_detailed
+    w.heading('Entitlement Strategy — Pathway Analysis')
+    w.text('Ranked development pathways based on LA zoning code and state statutes. Every conclusion cites the applicable LAMC section or California statute.', { size: 8.5, color: C_MED })
+    w.gap(6)
+
+    // Recommended path highlight box
+    if (ed.recommended_path) {
+      const rp = ed.recommended_path
+      w.subheading(`Recommended: ${rp.name}`)
+      w.text(`Timeline: ${rp.timeline_months?.min ?? '?'}–${rp.timeline_months?.max ?? '?'} months  |  Max Units: ${rp.max_units}  |  Affordable Required: ${rp.affordable_requirement_pct}%`, { size: 9, color: C_CYAN })
+      w.text(`Citation: ${rp.citation.source} ${rp.citation.section}`, { size: 8, color: C_GRAY })
+      w.gap(4)
+    }
+
+    // Summary metrics row
+    const metricItems = [
+      `By-Right Eligible: ${ed.by_right_eligible ? 'YES' : 'NO'}`,
+      `Streamlined Eligible: ${ed.streamlined_eligible ? 'YES' : 'NO'}`,
+      `Risk Score: ${ed.entitlement_risk_score}/10`,
+      `Est. Permit Fees: $${(ed.estimated_permit_fees ?? 0).toLocaleString()}`,
+      `Max Units (any path): ${ed.units_max_any_path}`,
+    ]
+    for (const item of metricItems) w.bullet(item)
+    w.gap(6)
+
+    // Pathway comparison table
+    w.tableHeader(['PATHWAY', 'CATEGORY', 'TIMELINE', 'MAX UNITS', 'AFFORDABLE %', 'CITATION'], [2, 120, 200, 280, 350, 420])
+    for (const p of ed.pathways) {
+      const row = [
+        p.name.substring(0, 25),
+        p.category,
+        p.timeline_months ? `${p.timeline_months.min}–${p.timeline_months.max}mo` : '?',
+        String(p.max_units),
+        `${p.affordable_requirement_pct}%`,
+        `${p.citation.source} ${p.citation.section}`.substring(0, 30),
+      ]
+      w.simpleRow(row, [2, 120, 200, 280, 350, 420])
+    }
+    w.gap(6)
+
+    // Stacked incentives
+    if (ed.stacked_incentives.length > 0) {
+      w.subheading('Stackable Incentives')
+      for (const inc of ed.stacked_incentives) {
+        w.bullet(`${inc.program} (${inc.type}) — ${inc.description.substring(0, 80)} | Est. $${(inc.estimated_subsidy_per_unit ?? 0).toLocaleString()}/unit | Citation: ${inc.citation.source} ${inc.citation.section}`)
+      }
+    }
+    w.gap(8)
+  }
+
+  // ── DEVELOPER PRO FORMA ────────────────────────────────────────────────────
+  if (report.profit_model_data && 'total_development_cost' in report.profit_model_data) {
+    const pm = report.profit_model_data
+    w.heading('Developer Pro Forma')
+    w.text('Estimated returns for market-rate development. All figures are estimates — verify with licensed contractor, broker, and lender before commitment.', { size: 8.5, color: C_MED })
+    w.gap(4)
+
+    // Deal signal banner
+    const signalColor = pm.deal_signal === 'GO' ? C_GREEN : pm.deal_signal === 'BORDERLINE' ? C_AMBER : C_RED
+    w.subheading(`Deal Signal: ${pm.deal_signal ?? '?'}`)
+    w.text(pm.deal_signal_reason ?? '', { size: 8.5, color: signalColor })
+    w.gap(6)
+
+    // Cost stack
+    w.subheading('Construction Cost Stack')
+    const costRows = [
+      ['Land Price (est.)', `$${pm.land_price.toLocaleString()}`],
+      ['Hard Costs', `$${pm.hard_costs_total.toLocaleString()} ($${pm.hard_costs_per_sf}/sf, ${pm.construction_type})`],
+      ['Soft Costs (20%)', `$${pm.soft_costs_total.toLocaleString()}`],
+      ['Permit Fees', `$${pm.permit_fees.toLocaleString()}`],
+      ['Developer Fee + Contingency', `$${(pm.developer_fee + pm.contingency).toLocaleString()}`],
+      ['TOTAL DEVELOPMENT COST', `$${pm.total_development_cost.toLocaleString()} ($${pm.cost_per_unit.toLocaleString()}/unit)`],
+    ]
+    w.tableHeader(['LINE ITEM', 'AMOUNT'], [2, 280])
+    for (const [label, val] of costRows) w.simpleRow([label, val], [2, 280])
+    w.gap(6)
+
+    // Returns summary
+    w.subheading('Returns Summary')
+    const returnRows = [
+      ['Units Modeled', String(pm.buildable_units)],
+      ['Avg Rent/Unit/Mo', `$${pm.avg_rent_per_unit_mo.toLocaleString()}`],
+      ['NOI', `$${pm.net_operating_income.toLocaleString()}/yr`],
+      ['Exit Value (4.5% cap)', `$${pm.exit_value.toLocaleString()} ($${pm.exit_price_per_unit.toLocaleString()}/unit)`],
+      ['Debt (65% LTC)', `$${pm.debt_amount.toLocaleString()}`],
+      ['Equity Required', `$${pm.equity_required.toLocaleString()}`],
+      ['IRR (Levered)', `${pm.irr_levered}%`],
+      ['Equity Multiple', `${pm.equity_multiple}x`],
+      ['Cash-on-Cash Yr 1', `${pm.cash_on_cash_yr1}%`],
+    ]
+    w.tableHeader(['METRIC', 'VALUE'], [2, 280])
+    for (const [label, val] of returnRows) w.simpleRow([label, val], [2, 280])
+    w.gap(6)
+
+    // Max offer price
+    w.subheading('Max Supportable Land Price @ 20% Target IRR')
+    w.text(`$${pm.max_land_price_at_target_irr.toLocaleString()} total  |  $${pm.max_land_price_per_unit.toLocaleString()}/unit`, { size: 11, color: pm.deal_signal === 'GO' ? C_GREEN : C_RED })
+    w.gap(4)
+
+    // Sensitivity
+    if (pm.sensitivity?.rows?.length) {
+      w.subheading('Sensitivity Analysis')
+      w.tableHeader(['SCENARIO', 'RENT ±%', 'COST ±%', 'IRR LEVERED', 'EQUITY MULTIPLE'], [2, 130, 210, 300, 390])
+      for (const row of pm.sensitivity.rows) {
+        w.simpleRow([
+          row.label,
+          `${row.rent_change_pct > 0 ? '+' : ''}${row.rent_change_pct}%`,
+          `${row.construction_change_pct > 0 ? '+' : ''}${row.construction_change_pct}%`,
+          `${row.irr_levered}%`,
+          `${row.equity_multiple}x`,
+        ], [2, 130, 210, 300, 390])
+      }
+    }
+    w.gap(4)
+    if ((pm as unknown as Record<string, unknown>).development_note) w.text(String((pm as unknown as Record<string, unknown>).development_note), { size: 8, color: C_AMBER })
     w.gap(8)
   }
 
