@@ -40,6 +40,7 @@ describe('adaptZimas', () => {
           max_far: 1.5,
           height_limit_ft: 45,
           height_limit_stories: 4,
+          hpoz_name: null,
           raw: {},
         },
       },
@@ -63,7 +64,7 @@ describe('adaptZimas', () => {
         zimas: {
           source: 'zimas', lat: 0, lon: 0, zone_code: 'UNKNOWN', zone_class: 'UNKNOWN',
           height_district: '1', zone_description: '', max_far: null, height_limit_ft: null,
-          height_limit_stories: null, raw: {}, error: 'Geocoding failed',
+          height_limit_stories: null, hpoz_name: null, raw: {}, error: 'Geocoding failed',
         },
       },
     })

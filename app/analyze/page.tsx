@@ -62,6 +62,8 @@ function AnalyzeInner() {
         headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
         body: JSON.stringify({
           street: address.trim(),
+          city: 'Los Angeles',
+          state: 'CA',
           zip_code: zip || undefined,
           tier,
         }),
@@ -71,8 +73,19 @@ function AnalyzeInner() {
       clearInterval(timer);
       setElapsed(Math.floor((Date.now() - start) / 1000));
 
+      if (res.status === 401) {
+        // Key missing, invalid, or revoked — clear it and send to pricing
+        localStorage.removeItem('sevennova_api_key');
+        router.push('/pricing?reason=expired');
+        return;
+      }
+
+      if (res.status === 429) {
+        throw new Error('Daily report limit reached. Upgrade your plan at sevennova.ai/pricing');
+      }
+
       if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
+        throw new Error(`Server error (${res.status}) — please try again`);
       }
 
       setHtml(text);
@@ -109,8 +122,11 @@ function AnalyzeInner() {
 
         {/* Form */}
         <form onSubmit={handleSubmit} style={{ background: S.bg2, border: `1px solid ${S.border}`, padding: '28px 32px', marginBottom: 32 }}>
-          <p style={{ fontSize: '0.65rem', letterSpacing: '0.14em', color: S.textMuted, textTransform: 'uppercase', marginBottom: 16 }}>
+          <p style={{ fontSize: '0.65rem', letterSpacing: '0.14em', color: S.textMuted, textTransform: 'uppercase', marginBottom: 4 }}>
             Analyze Property
+          </p>
+          <p style={{ fontSize: '0.68rem', color: S.textMuted, marginBottom: 16 }}>
+            Los Angeles City &amp; County addresses only
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 10, marginBottom: 14 }}>

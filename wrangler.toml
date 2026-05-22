@@ -9,3 +9,4 @@ NEXT_PUBLIC_API_URL = "https://api.sevennova.ai"
 directory = "out"
 not_found_handling = "single-page-application"
 binding = "ASSETS"
+run_worker_first = true

@@ -37,6 +37,7 @@ export interface ProfitModelInput {
   // Required
   land_price: number
   buildable_units: number
+  land_price_provided?: boolean   // true only when land_price came from the user (finance gate)
 
   // Optional — defaults applied if not provided
   avg_unit_size_sf?: number          // default: 850 sf
@@ -100,15 +101,15 @@ export interface ProfitModel {
 
   // ── Returns ────────────────────────────────────────────────────────────────
   irr_unlevered: number
-  irr_levered: number
+  irr_levered: number | null    // null when land price not user-provided (finance gate)
   equity_multiple: number
   cash_on_cash_yr1: number
   levered_profit: number
 
   // ── Max offer price (backward-solve) ──────────────────────────────────────
   target_irr: number
-  max_land_price_at_target_irr: number
-  max_land_price_per_unit: number
+  max_land_price_at_target_irr: number | null   // null when land price not user-provided
+  max_land_price_per_unit: number | null         // null when land price not user-provided
   max_land_pct_of_tdc: number
 
   // ── Sensitivity table ──────────────────────────────────────────────────────
@@ -117,8 +118,14 @@ export interface ProfitModel {
   // ── Meta ───────────────────────────────────────────────────────────────────
   confidence: 'HIGH' | 'MEDIUM' | 'LOW'
   assumptions_note: string
-  deal_signal: 'GO' | 'BORDERLINE' | 'NO-GO'
+  deal_signal: 'GO' | 'BORDERLINE' | 'NO-GO' | 'NEEDS_INPUT'
   deal_signal_reason: string
+
+  // Provenance
+  data_basis: string
+  human_review_required: boolean
+  warning?: string | null
+  note?: string | null   // set when early-exit path triggered (insufficient parcel data)
 }
 
 // ─── Hard cost benchmarks by construction type ────────────────────────────────
@@ -207,7 +214,7 @@ function solveMaxLandPrice(
 }
 
 // ─── Core model computation ───────────────────────────────────────────────────
-function computeModel(input: Required<ProfitModelInput>): Omit<ProfitModel, 'sensitivity' | 'confidence' | 'assumptions_note' | 'deal_signal' | 'deal_signal_reason' | 'max_land_price_at_target_irr' | 'max_land_price_per_unit' | 'max_land_pct_of_tdc'> {
+function computeModel(input: Required<ProfitModelInput>): Omit<ProfitModel, 'sensitivity' | 'confidence' | 'assumptions_note' | 'deal_signal' | 'deal_signal_reason' | 'max_land_price_at_target_irr' | 'max_land_price_per_unit' | 'max_land_pct_of_tdc' | 'data_basis' | 'human_review_required' | 'irr_levered' | 'warning'> & { irr_levered: number } {
   const {
     land_price,
     buildable_units,
@@ -311,11 +318,74 @@ function computeModel(input: Required<ProfitModelInput>): Omit<ProfitModel, 'sen
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+// Safe early-exit shape: parity with JS calcProfitModel insufficient-data return.
+// Same gated structure as the normal-path gate; all numeric fields zeroed; decision outputs null.
+function insufficientDataProfit(note: string): ProfitModel {
+  const warning = 'Insufficient parcel data. User/professional verification required before financial analysis.'
+  return {
+    land_price: 0,
+    buildable_units: 0,
+    avg_unit_size_sf: 0,
+    construction_type: 'Type V',
+    avg_rent_per_unit_mo: 0,
+    hard_costs_per_sf: 0,
+    gross_building_area_sf: 0,
+    hard_costs_total: 0,
+    soft_costs_pct: 0,
+    soft_costs_total: 0,
+    permit_fees: 0,
+    developer_fee: 0,
+    contingency: 0,
+    total_development_cost: 0,
+    cost_per_unit: 0,
+    cost_per_sf: 0,
+    gross_annual_income: 0,
+    vacancy_loss: 0,
+    effective_gross_income: 0,
+    operating_expenses: 0,
+    net_operating_income: 0,
+    cap_rate_exit: 0,
+    exit_value: 0,
+    exit_price_per_unit: 0,
+    ltc_pct: 0,
+    debt_amount: 0,
+    equity_required: 0,
+    annual_debt_service: 0,
+    irr_unlevered: 0,
+    irr_levered: null,
+    equity_multiple: 0,
+    cash_on_cash_yr1: 0,
+    levered_profit: 0,
+    target_irr: 20,
+    max_land_price_at_target_irr: null,
+    max_land_price_per_unit: null,
+    max_land_pct_of_tdc: 0,
+    sensitivity: { rows: [] },
+    confidence: 'LOW',
+    assumptions_note: '',
+    deal_signal: 'NEEDS_INPUT',
+    deal_signal_reason: warning,
+    data_basis: 'MODEL_ESTIMATE — based on default assumptions; not verified bids, appraisal, lender quote, or final underwriting.',
+    human_review_required: true,
+    warning,
+    note,
+  }
+}
+
 export function runProfitModel(raw: ProfitModelInput): ProfitModel {
+  // Early-exit: insufficient parcel data → safe gated shape (parity with JS path)
+  if (!raw.buildable_units || raw.buildable_units < 1) {
+    return insufficientDataProfit('Insufficient parcel data for pro forma. Unit count unavailable.')
+  }
+  if (!raw.land_price || raw.land_price < 1) {
+    return insufficientDataProfit('Insufficient parcel data for pro forma. Land price unavailable.')
+  }
+
   // Apply defaults
   const input: Required<ProfitModelInput> = {
     land_price: raw.land_price,
     buildable_units: raw.buildable_units,
+    land_price_provided: raw.land_price_provided ?? false,
     avg_unit_size_sf: raw.avg_unit_size_sf ?? 850,
     construction_type: raw.construction_type ?? 'Type V',
     avg_rent_per_unit_mo: raw.avg_rent_per_unit_mo ?? raw.hud_fmr_2br ?? 2_800,
@@ -416,15 +486,24 @@ export function runProfitModel(raw: ProfitModelInput): ProfitModel {
     `All costs are estimates — verify with licensed contractor and broker before committing.`,
   ].join(' | ')
 
+  // ── Finance gate: suppress decision outputs when land price is not user-provided ──
+  const landPriceProvided = raw.land_price_provided ?? false
+  const gateWarning = 'User-provided land price required before IRR, deal signal, or max land price can be calculated.'
+
   return {
     ...base,
-    max_land_price_at_target_irr: maxLandPrice,
-    max_land_price_per_unit: Math.round(maxLandPrice / input.buildable_units),
+    irr_levered: landPriceProvided ? base.irr_levered : null,
+    max_land_price_at_target_irr: landPriceProvided ? maxLandPrice : null,
+    max_land_price_per_unit: landPriceProvided ? Math.round(maxLandPrice / input.buildable_units) : null,
     max_land_pct_of_tdc: Math.round((maxLandPrice / base.total_development_cost) * 100 * 10) / 10,
     sensitivity: { rows: sensitivityRows },
     confidence,
     assumptions_note: assumptionsNote,
-    deal_signal: dealSignal,
-    deal_signal_reason: dealReason,
+    deal_signal: landPriceProvided ? dealSignal : 'NEEDS_INPUT',
+    deal_signal_reason: landPriceProvided ? dealReason : gateWarning,
+    warning: landPriceProvided ? null : gateWarning,
+
+    data_basis: 'MODEL_ESTIMATE — based on default assumptions; not verified bids, appraisal, lender quote, or final underwriting.',
+    human_review_required: !landPriceProvided || confidence !== 'HIGH',
   }
 }

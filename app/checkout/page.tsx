@@ -21,22 +21,45 @@ const S = {
 
 const PLAN_INFO: Record<string, { label: string; price: string; desc: string; features: string[] }> = {
   basic: {
-    label: 'Basic Report',
+    label: 'Starter Report',
     price: '$49',
-    desc: 'One-time report',
-    features: ['Zoning + APN + LADBS violations', 'Ensemble valuation', 'ADU eligibility', 'PDF export'],
+    desc: 'One-time report — zoning screening',
+    features: [
+      'Zoning code + FAR + height limit',
+      'Entitlement eligibility flags',
+      'By-right units estimate',
+      'LADBS permit & violation check',
+      'Seismic + flood risk',
+      'PDF download',
+    ],
   },
   full: {
-    label: 'Full Report',
+    label: 'Pro Report',
     price: '$199',
-    desc: 'One-time report — all 15 AI skills',
-    features: ['All 15 AI skills', 'Deal score + investment thesis', 'Distress signals + DSCR', 'Climate risk + entitlement pathways'],
+    desc: 'One-time report — full development feasibility',
+    features: [
+      'Everything in Starter',
+      'All entitlement pathways with LAMC citations',
+      'Developer pro forma (IRR · NOI · TDC)',
+      'Max land price @ 20% target IRR',
+      '5-scenario sensitivity analysis',
+      'Stackable incentives (TOC + LIHTC + HOME)',
+      'Distress signals + DSCR estimate',
+      'Climate risk + insurance stress score',
+    ],
   },
   institutional: {
-    label: 'Institutional Report',
+    label: 'Developer Report',
     price: '$499',
-    desc: 'One-time report',
-    features: ['Everything in Full', 'Market comparables', 'Legal entity graph', 'Analyst review notes'],
+    desc: 'One-time report — institutional grade',
+    features: [
+      'Everything in Pro',
+      'AI valuation ensemble (XGBoost + LightGBM + CatBoost)',
+      'Market comparable analysis',
+      'Legal entity graph',
+      'Analyst review notes',
+      'City Evidence Package',
+    ],
   },
   broker: {
     label: 'Broker Plan',
@@ -63,7 +86,7 @@ function CheckoutInner() {
   const tier = searchParams.get('tier') ?? 'full';
   const type = searchParams.get('type') ?? 'report';
 
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState(decodeURIComponent(searchParams.get('address') ?? ''));
   const [zip, setZip] = useState('');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);

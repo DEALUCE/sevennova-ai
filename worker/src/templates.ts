@@ -3,6 +3,8 @@ import type {
   DistressResult, ClimateResult, EntitlementResult, DataPoint,
 } from './orchestrator'
 
+type ParcelVerified = NonNullable<PropertyReport['parcel_verified']>
+
 const fmt = (n: unknown): string => Math.round(Number(n)).toLocaleString('en-US')
 const fmtPct = (n: unknown): string => `${Math.round(Number(n))}%`
 const fmtDec = (n: unknown, d = 1): string => Number(n).toFixed(d)
@@ -54,6 +56,49 @@ function renderZoning(z: ZoningResult): string {
       <tr><td>LADBS Violations</td><td class="mono">${dp(z.ladbs_violations)}</td><td>LADBS</td><td><span class="badge badge-${String(z.ladbs_violations?.value ?? '').toLowerCase().includes('active') ? 'red' : 'green'}">${String(z.ladbs_violations?.value ?? '').toLowerCase().includes('active') ? 'Active' : 'Clear'}</span></td></tr>
       <tr><td>Buildable SF</td><td class="mono">${fmt(z.buildable_sf?.value)}</td><td>FAR × Lot</td><td><span class="badge badge-unverified">Estimate</span></td></tr>
       <tr><td>Units (By-Right)</td><td class="mono">${dp(z.max_units_by_right)}</td><td>No bonus</td><td><span class="badge badge-blue">Base</span></td></tr>
+    </tbody>
+  </table>
+</div>`
+}
+
+function renderZoningPhase3(pv: ParcelVerified): string {
+  const ed1 = pv.ed1_eligible
+  const sb9 = pv.sb9_eligible
+  const ab2011 = pv.ab2011_eligible
+  const lique = pv.in_liquefaction_zone
+  const slide = pv.in_landslide_area
+
+  return `
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">02b</div>
+    <div class="section-title">Entitlement Pathways &amp; Hazard Overlays</div>
+  </div>
+  <div class="cards-3">
+    <div class="card card-${ed1 ? 'green' : 'muted'}">
+      <div class="card-label">ED1 — Exec Directive 1</div>
+      <div class="card-value" style="font-size:16px;color:var(--${ed1 ? 'green' : 'muted'})">${ed1 ? '✓ Eligible' : 'Not Eligible'}</div>
+      <div class="card-sub">100% affordable streamlining</div>
+    </div>
+    <div class="card card-${sb9 === true ? 'green' : sb9 === false ? 'red' : 'muted'}">
+      <div class="card-label">SB9 — Lot Split / Duplex</div>
+      <div class="card-value" style="font-size:16px;color:var(--${sb9 === true ? 'green' : sb9 === false ? 'red' : 'muted'})">${sb9 === null ? '—' : sb9 ? '✓ Eligible' : '✗ Not Eligible'}</div>
+      <div class="card-sub">${pv.sb9_note || 'Zone-computed'}</div>
+    </div>
+    <div class="card card-${ab2011 === true ? 'green' : ab2011 === false ? 'red' : 'muted'}">
+      <div class="card-label">AB2011 — Commercial→Res</div>
+      <div class="card-value" style="font-size:16px;color:var(--${ab2011 === true ? 'green' : ab2011 === false ? 'red' : 'muted'})">${ab2011 === null ? '—' : ab2011 ? '✓ Eligible' : '✗ Not Eligible'}</div>
+      <div class="card-sub">${pv.ab2011_note || 'Zone-computed'}</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Pathway / Overlay</th><th>Result</th><th>Basis</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>ED1 Eligible</td><td class="mono">${ed1 ? 'Yes — 100% Affordable pathway' : 'No'}</td><td>LA Mayor ED1 (Dec 2022)</td><td><span class="badge badge-blue">Computed</span></td></tr>
+      <tr><td>SB9 Eligible</td><td class="mono">${sb9 === null ? '—' : sb9 ? 'Yes' : 'No'}</td><td>CA SB9 State Law</td><td><span class="badge badge-blue">Zone-Computed</span></td></tr>
+      <tr><td>AB2011 Eligible</td><td class="mono">${ab2011 === null ? '—' : ab2011 ? 'Yes' : 'No'}</td><td>CA AB2011 State Law</td><td><span class="badge badge-blue">Zone-Computed</span></td></tr>
+      <tr><td>Liquefaction Zone</td><td class="mono" style="color:${lique ? 'var(--red)' : 'inherit'}">${lique === null ? '—' : lique ? '⚠ YES — In Zone' : 'No'}</td><td>LA City Geotechnical GIS</td><td>${statusBadge(pv.geo_hazard_status)}</td></tr>
+      <tr><td>Landslide Area</td><td class="mono" style="color:${slide ? 'var(--red)' : 'inherit'}">${slide === null ? '—' : slide ? '⚠ YES — In Area' : 'No'}</td><td>LA City Geotechnical GIS</td><td>${statusBadge(pv.geo_hazard_status)}</td></tr>
     </tbody>
   </table>
 </div>`
@@ -254,6 +299,262 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14
 @media(max-width:768px){.cards-4,.cards-3{grid-template-columns:repeat(2,1fr)}.cards-2{grid-template-columns:1fr}.deal-score-badge{width:60px;height:60px}.deal-score-letter{font-size:24px}}
 `
 
+function statusBadge(status: string): string {
+  if (status === 'VERIFIED' || status.endsWith('_LIVE')) return '<span class="badge badge-green">VERIFIED</span>'
+  if (status === 'ERROR') return '<span class="badge badge-red">ERROR</span>'
+  return '<span class="badge badge-unverified">UNAVAILABLE</span>'
+}
+
+function renderLocationIntel(pv: ParcelVerified): string {
+  const railDist = pv.transit_nearest_rail_mi != null ? `${pv.transit_nearest_rail_mi} mi` : '—'
+  const railName = pv.transit_nearest_rail_name ?? '—'
+  const transitScore = pv.transit_score ?? null
+  const transitClass = transitScore == null ? 'muted' : transitScore >= 60 ? 'green' : transitScore >= 30 ? 'gold' : 'red'
+  const elevFt = pv.elevation_ft != null ? `${pv.elevation_ft} ft` : '—'
+  const walkScore = pv.walkability_score ?? null
+  const walkClass = walkScore == null ? 'muted' : walkScore >= 60 ? 'green' : walkScore >= 30 ? 'gold' : 'red'
+  const rsoVerified = pv.rso_status === 'VERIFIED'
+  const rsoVal = rsoVerified ? (pv.rso_in_area ? `Yes — ${pv.rso_label ?? 'RSO Area'}` : 'No') : '—'
+  const rsoBadge = rsoVerified ? `<span class="badge badge-${pv.rso_in_area ? 'red' : 'green'}">${pv.rso_in_area ? 'Applies' : 'No RSO'}</span>` : '<span class="badge badge-unverified">UNAVAILABLE</span>'
+
+  return `
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">07</div>
+    <div class="section-title">Location Intelligence</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-accent">
+      <div class="card-label">Nearest Rail</div>
+      <div class="card-value" style="font-size:18px">${railDist}</div>
+      <div class="card-sub">${railName}</div>
+    </div>
+    <div class="card card-${transitClass}">
+      <div class="card-label">Transit Score</div>
+      <div class="card-value" style="font-size:18px;color:var(--${transitClass === 'muted' ? 'muted' : transitClass})">${transitScore ?? '—'}/60</div>
+      <div class="card-sub">Rail proximity based</div>
+    </div>
+    <div class="card card-${walkClass}">
+      <div class="card-label">Walkability Score</div>
+      <div class="card-value" style="font-size:18px;color:var(--${walkClass === 'muted' ? 'muted' : walkClass})">${walkScore ?? '—'}/100</div>
+      <div class="card-sub">${pv.walk_status === 'VERIFIED' ? 'OSM verified' : 'Unavailable'}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Elevation</div>
+      <div class="card-value" style="font-size:18px">${elevFt}</div>
+      <div class="card-sub">${pv.elevation_ft != null ? 'USGS verified' : 'Unavailable'}</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Parameter</th><th>Value</th><th>Source</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>RSO Coverage</td><td class="mono">${rsoVal}</td><td>LA City Housing Dept</td><td>${rsoBadge}</td></tr>
+      <tr><td>Rail Station</td><td class="mono">${railName}</td><td>LA Metro Static</td><td>${statusBadge(pv.transit_score != null ? 'VERIFIED' : 'UNAVAILABLE')}</td></tr>
+      <tr><td>Rail Distance</td><td class="mono">${railDist}</td><td>LA Metro Static</td><td>${statusBadge(pv.transit_score != null ? 'VERIFIED' : 'UNAVAILABLE')}</td></tr>
+      <tr><td>Grocery Stores (½ mi)</td><td class="mono">${pv.walk_grocery_half_mi ?? '—'}</td><td>OpenStreetMap</td><td>${statusBadge(pv.walk_status)}</td></tr>
+      <tr><td>Restaurants (¼ mi)</td><td class="mono">${pv.walk_restaurant_quarter_mi ?? '—'}</td><td>OpenStreetMap</td><td>${statusBadge(pv.walk_status)}</td></tr>
+      <tr><td>Parks (¼ mi)</td><td class="mono">${pv.walk_park_quarter_mi ?? '—'}</td><td>OpenStreetMap</td><td>${statusBadge(pv.walk_status)}</td></tr>
+      <tr><td>Community Plan Area</td><td class="mono">${pv.community_plan_area ?? '—'}</td><td>LA City Planning</td><td>${statusBadge(pv.overlays_status)}</td></tr>
+      <tr><td>Council District</td><td class="mono">${pv.council_district != null ? `CD ${pv.council_district}${pv.council_member ? ` — ${pv.council_member}` : ''}` : '—'}</td><td>LA City GeoHub</td><td>${statusBadge(pv.overlays_status)}</td></tr>
+    </tbody>
+  </table>
+</div>`
+}
+
+function renderEnvironmental(pv: ParcelVerified): string {
+  const ciPct = pv.enviro_ci_percentile
+  const ciClass = ciPct == null ? 'muted' : ciPct >= 75 ? 'red' : ciPct >= 50 ? 'gold' : 'green'
+  const epaFac = pv.epa_facilities_half_mi ?? '—'
+  const epaViol = pv.epa_significant_violators ?? 0
+  const epaClass = epaViol > 0 ? 'red' : 'green'
+  const penalties = pv.epa_total_penalties_usd != null && pv.epa_total_penalties_usd > 0
+    ? `$${Math.round(pv.epa_total_penalties_usd).toLocaleString('en-US')}`
+    : '$0'
+  const seismicLabel = pv.seismic_risk_label ?? '—'
+  const seismicScore = pv.seismic_risk_score ?? null
+  const seismicClass = seismicScore == null ? 'muted' : seismicScore >= 80 ? 'red' : seismicScore >= 50 ? 'gold' : 'green'
+
+  return `
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">08</div>
+    <div class="section-title">Environmental &amp; Hazard Intelligence</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-${ciClass}">
+      <div class="card-label">CalEnviroScreen</div>
+      <div class="card-value" style="font-size:18px;color:var(--${ciClass === 'muted' ? 'muted' : ciClass})">${ciPct != null ? `${ciPct}th` : '—'}</div>
+      <div class="card-sub">Pollution burden percentile</div>
+    </div>
+    <div class="card">
+      <div class="card-label">EPA Facilities (½ mi)</div>
+      <div class="card-value" style="font-size:18px">${epaFac}</div>
+      <div class="card-sub">Regulated facilities</div>
+    </div>
+    <div class="card card-${epaClass}">
+      <div class="card-label">Significant Violators</div>
+      <div class="card-value" style="font-size:18px;color:var(--${epaClass})">${pv.epa_significant_violators ?? '—'}</div>
+      <div class="card-sub">Active EPA violations</div>
+    </div>
+    <div class="card card-${seismicClass}">
+      <div class="card-label">Seismic Risk</div>
+      <div class="card-value" style="font-size:16px;color:var(--${seismicClass === 'muted' ? 'muted' : seismicClass})">${seismicLabel}</div>
+      <div class="card-sub">USGS ShakeMap</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Indicator</th><th>Value</th><th>Source</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>CI Score Percentile</td><td class="mono">${ciPct != null ? `${ciPct}th percentile` : '—'}</td><td>CalEPA EnviroScreen 4.0</td><td>${statusBadge(pv.enviro_status)}</td></tr>
+      <tr><td>Pollution Burden %ile</td><td class="mono">${pv.enviro_pollution_percentile != null ? `${pv.enviro_pollution_percentile}th` : '—'}</td><td>CalEPA EnviroScreen 4.0</td><td>${statusBadge(pv.enviro_status)}</td></tr>
+      <tr><td>Poverty Percentile</td><td class="mono">${pv.enviro_poverty_percentile != null ? `${pv.enviro_poverty_percentile}th` : '—'}</td><td>CalEPA EnviroScreen 4.0</td><td>${statusBadge(pv.enviro_status)}</td></tr>
+      <tr><td>Diesel PM Percentile</td><td class="mono">${pv.enviro_diesel_percentile != null ? `${pv.enviro_diesel_percentile}th` : '—'}</td><td>CalEPA EnviroScreen 4.0</td><td>${statusBadge(pv.enviro_status)}</td></tr>
+      <tr><td>RCRA Hazwaste Sites</td><td class="mono">${pv.epa_rcra_hazwaste ?? '—'}</td><td>EPA ECHO</td><td>${statusBadge(pv.epa_status)}</td></tr>
+      <tr><td>Current EPA Violations</td><td class="mono">${pv.epa_current_violations ?? '—'}</td><td>EPA ECHO</td><td>${statusBadge(pv.epa_status)}</td></tr>
+      <tr><td>Total EPA Penalties</td><td class="mono">${penalties}</td><td>EPA ECHO</td><td>${statusBadge(pv.epa_status)}</td></tr>
+      <tr><td>Liquefaction Zone</td><td class="mono">${pv.in_liquefaction_zone == null ? '—' : pv.in_liquefaction_zone ? '⚠ YES' : 'No'}</td><td>LA City Geotechnical</td><td>${statusBadge(pv.geo_hazard_status)}</td></tr>
+      <tr><td>Landslide Area</td><td class="mono">${pv.in_landslide_area == null ? '—' : pv.in_landslide_area ? '⚠ YES' : 'No'}</td><td>LA City Geotechnical</td><td>${statusBadge(pv.geo_hazard_status)}</td></tr>
+      <tr><td>Permits (Last 5 Yrs)</td><td class="mono">${pv.permits_5yr ?? '—'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>Permit Types</td><td class="mono">${pv.permit_types ?? '—'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>Total Permit Valuation</td><td class="mono">${pv.permit_total_valuation_usd != null ? '$' + pv.permit_total_valuation_usd.toLocaleString('en-US') : '—'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>New Construction Permit</td><td class="mono" style="color:${pv.permit_has_new_construction ? 'var(--green)' : 'inherit'}">${pv.permit_has_new_construction == null ? '—' : pv.permit_has_new_construction ? 'YES' : 'No'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>Demolition Permit</td><td class="mono" style="color:${pv.permit_has_demolition ? 'var(--red)' : 'inherit'}">${pv.permit_has_demolition == null ? '—' : pv.permit_has_demolition ? '⚠ YES' : 'No'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>Most Recent Permit</td><td class="mono">${pv.permit_most_recent_date ?? '—'}</td><td>LADBS Open Data</td><td>${statusBadge(pv.permits_status)}</td></tr>
+      <tr><td>Census Tract</td><td class="mono">${pv.enviro_census_tract ?? '—'}</td><td>US Census Bureau</td><td>${statusBadge(pv.enviro_status)}</td></tr>
+    </tbody>
+  </table>
+</div>`
+}
+
+function renderDemographics(pv: ParcelVerified): string {
+  const inc = pv.census_median_income
+  const incFmt = inc != null ? `$${inc.toLocaleString('en-US')}` : '—'
+  const incClass = inc == null ? 'muted' : inc >= 100000 ? 'green' : inc >= 65000 ? 'gold' : 'red'
+
+  const pov = pv.census_poverty_rate_pct
+  const povClass = pov == null ? 'muted' : pov >= 20 ? 'red' : pov >= 10 ? 'gold' : 'green'
+
+  const renter = pv.census_renter_occupied_pct
+  const pop = pv.census_total_population
+  const age = pv.census_median_age
+  const college = pv.census_college_degree_pct
+  const tractUnemployment = pv.census_unemployment_rate_pct
+  const tractRent = pv.census_median_gross_rent
+  const rentBurden = pv.census_rent_burden_severe_pct
+  const year = pv.census_acs_year ?? 'ACS5'
+
+  const fmtPct2 = (v: number | null) => v != null ? `${v}%` : '—'
+  const fmtDollar = (v: number | null) => v != null ? `$${v.toLocaleString('en-US')}` : '—'
+
+  return `
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">10</div>
+    <div class="section-title">Demographics &amp; Census Data</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-${incClass}">
+      <div class="card-label">Median Household Income</div>
+      <div class="card-value" style="font-size:22px;color:var(--${incClass === 'muted' ? 'muted' : incClass})">${incFmt}</div>
+      <div class="card-sub">Census tract · ${year}</div>
+    </div>
+    <div class="card card-${povClass}">
+      <div class="card-label">Poverty Rate</div>
+      <div class="card-value" style="font-size:22px;color:var(--${povClass === 'muted' ? 'muted' : povClass})">${fmtPct2(pov)}</div>
+      <div class="card-sub">Below poverty line</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Renter Occupied</div>
+      <div class="card-value" style="font-size:22px">${fmtPct2(renter)}</div>
+      <div class="card-sub">${pv.census_owner_occupied_pct != null ? `Owner: ${pv.census_owner_occupied_pct}%` : 'Census ACS'}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total Population</div>
+      <div class="card-value" style="font-size:22px">${pop != null ? pop.toLocaleString('en-US') : '—'}</div>
+      <div class="card-sub">Census tract</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Indicator</th><th>Value</th><th>Source</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Median Household Income</td><td class="mono">${incFmt}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Poverty Rate</td><td class="mono">${fmtPct2(pov)}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Median Age</td><td class="mono">${age != null ? `${age} yrs` : '—'}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Total Housing Units</td><td class="mono">${pv.census_total_housing_units != null ? pv.census_total_housing_units.toLocaleString('en-US') : '—'}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Renter Occupied</td><td class="mono">${fmtPct2(renter)}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Median Gross Rent (Tract)</td><td class="mono">${fmtDollar(tractRent)}/mo</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Severe Rent Burden (50%+)</td><td class="mono">${fmtPct2(rentBurden)}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>College Degree %</td><td class="mono">${fmtPct2(college)}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Tract Unemployment Rate</td><td class="mono">${fmtPct2(tractUnemployment)}</td><td>Census ACS ${year}</td><td>${statusBadge(pv.census_status)}</td></tr>
+      <tr><td>Census Tract</td><td class="mono">${pv.census_tract ?? '—'}</td><td>US Census Bureau</td><td>${statusBadge(pv.census_status)}</td></tr>
+    </tbody>
+  </table>
+</div>`
+}
+
+function renderMarketBenchmarks(pv: ParcelVerified): string {
+  const blsRate = pv.bls_unemployment_rate != null ? `${pv.bls_unemployment_rate}%` : '—'
+  const blsMonth = pv.bls_unemployment_month ?? '—'
+  const blsClass = pv.bls_unemployment_rate == null ? 'muted' : pv.bls_unemployment_rate >= 7 ? 'red' : pv.bls_unemployment_rate >= 5 ? 'gold' : 'green'
+
+  const fmtFMR = (v: number | null): string => v != null ? `$${v.toLocaleString('en-US')}` : '—'
+  const fmr1 = pv.hud_fmr_1br
+  const fmr2 = pv.hud_fmr_2br
+  const fmrYear = pv.hud_fmr_year ?? 'FY2025'
+  const fmrStatic = pv.hud_fmr_status === 'UNAVAILABLE' || pv.hud_fmr_status === 'ERROR'
+  const fmrBadge = fmrStatic
+    ? '<span class="badge badge-yellow">STATIC</span>'
+    : statusBadge(pv.hud_fmr_status)
+
+  const cpa = pv.community_plan_area ?? '—'
+  const cd = pv.council_district != null
+    ? `CD ${pv.council_district}${pv.council_member ? ` (${pv.council_member})` : ''}`
+    : '—'
+
+  return `
+<div class="section">
+  <div class="section-header">
+    <div class="section-num">09</div>
+    <div class="section-title">Market Benchmarks</div>
+  </div>
+  <div class="cards-4">
+    <div class="card card-${blsClass}">
+      <div class="card-label">Unemployment Rate</div>
+      <div class="card-value" style="font-size:24px;color:var(--${blsClass === 'muted' ? 'muted' : blsClass})">${blsRate}</div>
+      <div class="card-sub">LA Metro · ${blsMonth}</div>
+    </div>
+    <div class="card card-accent">
+      <div class="card-label">HUD FMR 1BR</div>
+      <div class="card-value" style="font-size:20px">${fmtFMR(fmr1)}</div>
+      <div class="card-sub">${fmrYear} Fair Market Rent</div>
+    </div>
+    <div class="card card-accent">
+      <div class="card-label">HUD FMR 2BR</div>
+      <div class="card-value" style="font-size:20px">${fmtFMR(fmr2)}</div>
+      <div class="card-sub">${fmrYear} Fair Market Rent</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Community Plan</div>
+      <div class="card-value" style="font-size:15px">${cpa}</div>
+      <div class="card-sub">${cd}</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Benchmark</th><th>Value</th><th>Source</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>LA Metro Unemployment</td><td class="mono">${blsRate} (${blsMonth})</td><td>BLS LAUS</td><td>${statusBadge(pv.bls_status)}</td></tr>
+      <tr><td>FMR Studio</td><td class="mono">${fmtFMR(pv.hud_fmr_studio)}/mo</td><td>HUD ${fmrYear}</td><td>${fmrBadge}</td></tr>
+      <tr><td>FMR 1-Bedroom</td><td class="mono">${fmtFMR(pv.hud_fmr_1br)}/mo</td><td>HUD ${fmrYear}</td><td>${fmrBadge}</td></tr>
+      <tr><td>FMR 2-Bedroom</td><td class="mono">${fmtFMR(pv.hud_fmr_2br)}/mo</td><td>HUD ${fmrYear}</td><td>${fmrBadge}</td></tr>
+      <tr><td>FMR 3-Bedroom</td><td class="mono">${fmtFMR(pv.hud_fmr_3br)}/mo</td><td>HUD ${fmrYear}</td><td>${fmrBadge}</td></tr>
+      <tr><td>FMR 4-Bedroom</td><td class="mono">${fmtFMR(pv.hud_fmr_4br)}/mo</td><td>HUD ${fmrYear}</td><td>${fmrBadge}</td></tr>
+      <tr><td>Community Plan Area</td><td class="mono">${cpa}</td><td>LA City Planning</td><td>${statusBadge(pv.overlays_status)}</td></tr>
+      <tr><td>Council District</td><td class="mono">${cd}</td><td>LA City GeoHub</td><td>${statusBadge(pv.overlays_status)}</td></tr>
+    </tbody>
+  </table>
+</div>`
+}
+
 export function renderReportHTML(report: PropertyReport): string {
   const activatedCount = report.skills_activated.filter(s => s.activated).length
   const apnLine = report.address.apn ? `APN: ${report.address.apn} · ` : ''
@@ -323,14 +624,19 @@ ${report.red_flags.map(f => `<div class="alert"><strong>⚠ FLAG:</strong> ${f}<
 </div>
 
 ${report.zoning ? renderZoning(report.zoning) : ''}
+${report.parcel_verified ? renderZoningPhase3(report.parcel_verified) : ''}
 ${report.valuation ? renderValuation(report.valuation) : ''}
 ${report.distress ? renderDistress(report.distress) : ''}
 ${report.entitlement ? renderEntitlement(report.entitlement) : ''}
 ${report.climate ? renderClimate(report.climate) : ''}
+${report.parcel_verified ? renderLocationIntel(report.parcel_verified) : ''}
+${report.parcel_verified ? renderEnvironmental(report.parcel_verified) : ''}
+${report.parcel_verified ? renderMarketBenchmarks(report.parcel_verified) : ''}
+${report.parcel_verified ? renderDemographics(report.parcel_verified) : ''}
 
 <div class="section">
   <div class="section-header">
-    <div class="section-num">07</div>
+    <div class="section-num">11</div>
     <div class="section-title">Strategic Recommendations</div>
   </div>
   <div class="strategy-list">
@@ -347,7 +653,7 @@ ${report.climate ? renderClimate(report.climate) : ''}
 
 <div class="section">
   <div class="section-header">
-    <div class="section-num">08</div>
+    <div class="section-num">12</div>
     <div class="section-title">Risk Summary</div>
   </div>
   <p style="font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:16px">${report.risk_summary}</p>
@@ -356,7 +662,7 @@ ${report.climate ? renderClimate(report.climate) : ''}
 ${report.assumptions.length || report.unverified_items.length ? `
 <div class="section">
   <div class="section-header">
-    <div class="section-num">09</div>
+    <div class="section-num">13</div>
     <div class="section-title">Assumptions &amp; Unverified Data</div>
   </div>
   ${report.assumptions.length ? `<div class="warn" style="margin-bottom:12px"><strong>Assumptions [ASSUMPTION]:</strong><br>${report.assumptions.map(a => `<div style="margin-top:4px">• ${a}</div>`).join('')}</div>` : ''}
@@ -365,7 +671,7 @@ ${report.assumptions.length || report.unverified_items.length ? `
 
 <div class="section">
   <div class="section-header">
-    <div class="section-num">10</div>
+    <div class="section-num">14</div>
     <div class="section-title">Skill Activation Log</div>
   </div>
   <table class="data-table">

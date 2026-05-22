@@ -135,7 +135,7 @@ export async function onRequestPost(context) {
         'LA ADU ordinance',
         'LA City Open Data — Building & Safety Permits',
         'LA City Open Data — Code Enforcement Violations',
-        'LAMC § 12.22 A.25 — TOC Entitlement Pathways',
+        'LAMC § 12.22 A.31 — TOC Entitlement Pathways',
         "Mayor's Executive Directive 1 (2022) — Streamlined Affordable Housing",
         'California Gov. Code § 65913.4 — SB 35 (2017)',
         'AB 2011 (2022) — Commercial Corridor Conversion',
@@ -1037,13 +1037,13 @@ function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
       affordable_required_pct: affReq,
       key_requirements: [
         `${affReq}% of units affordable at ≤80% AMI (55-year covenant)`,
-        `Within Tier ${toc.tier} transit distance — LAMC 12.22 A.25 compliant`,
+        `Within Tier ${toc.tier} transit distance — LAMC 12.22 A.31 compliant`,
         'No public hearing required — ministerial approval',
         'Parking reduction available (AB 2097)',
       ],
       risks: ['Affordable units reduce market-rate revenue', 'TOC design standards review'],
-      citation: 'LAMC § 12.22 A.25 — TOC Affordable Housing Incentive Program',
-      citation_url: 'https://codelibrary.amlegal.com/codes/los_angeles/latest/lamc/0-0-0-175046',
+      citation: 'LAMC § 12.22 A.31 — TOC Affordable Housing Incentive Program',
+      citation_url: 'https://planning.lacity.gov/plans-policies/transit-oriented-communities-incentive-program',
       speed_rank: 2, units_rank: 2, risk_rank: 2,
     });
   }
@@ -1163,6 +1163,15 @@ function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
   stacked.push({ program:'AHSC (Affordable Housing Sustainable Communities)', type:'State', description:'CA cap-and-trade funds for affordable housing near transit', est_subsidy_per_unit:120000, stacks_with:['ED1','LIHTC','HOME'], citation:'Health & Safety Code § 50800' });
 
   return {
+    data_basis: 'RULE_BASED — computed from zoning/statute logic and available parcel inputs; eligibility flags only, not final legal determination.',
+    human_review_required:
+      !z ||
+      !lotSf ||
+      toc.tier === null ||
+      dev.ed1_eligible === null ||
+      dev.sb9_eligible === null ||
+      dev.ab2011_eligible === null ||
+      risk >= 7,
     pathways,
     fastest_path: fastest ? { id: fastest.id, name: fastest.name, timeline: fastest.timeline, max_units: fastest.max_units } : null,
     most_units_path: mostUnits ? { id: mostUnits.id, name: mostUnits.name, timeline: mostUnits.timeline, max_units: mostUnits.max_units } : null,
@@ -1294,7 +1303,19 @@ function _computeProForma(landPrice, units, opts) {
 function calcProfitModel(parcel, dev, toc, entitlement, userOverrides = {}) {
   const units = entitlement.recommended_path?.max_units || dev.max_potential_units || dev.base_units_by_right || 0;
   if (!units || !parcel.sqft_lot) {
-    return { note: 'Insufficient parcel data for pro forma. Lot size or unit count unavailable.' };
+    // Early-exit: insufficient parcel data — return safe gated shape matching the normal-path gate
+    const insufficientWarning = 'Insufficient parcel data. User/professional verification required before financial analysis.';
+    return {
+      note: 'Insufficient parcel data for pro forma. Lot size or unit count unavailable.',
+      data_basis: 'MODEL_ESTIMATE — based on default assumptions; not verified bids, appraisal, lender quote, or final underwriting.',
+      human_review_required: true,
+      irr_levered: null,
+      deal_signal: 'NEEDS_INPUT',
+      deal_signal_reason: insufficientWarning,
+      max_land_price_at_target_irr: null,
+      max_land_price_per_unit: null,
+      warning: insufficientWarning,
+    };
   }
 
   // Default land price: LA County assessed land value (Prop 13 — typically 30-60% of market)
@@ -1302,6 +1323,7 @@ function calcProfitModel(parcel, dev, toc, entitlement, userOverrides = {}) {
   const assessedLandVal = parcel.land_value || 0;
   const estimatedMarketLand = assessedLandVal > 0 ? assessedLandVal * 2.5 : units * 100000;
   const landPrice = userOverrides.land_price || estimatedMarketLand;
+  const landPriceProvided = !!userOverrides.land_price;
 
   const opts = {
     avgUnitSf: userOverrides.avg_unit_size_sf || 850,
@@ -1355,15 +1377,20 @@ function calcProfitModel(parcel, dev, toc, entitlement, userOverrides = {}) {
   });
 
   return {
+    data_basis: 'MODEL_ESTIMATE — based on default assumptions; not verified bids, appraisal, lender quote, or final underwriting.',
+    human_review_required: !(userOverrides.land_price && userOverrides.avg_rent_per_unit_mo),
     units_modeled: units,
     land_price_used: Math.round(landPrice),
     land_price_source: userOverrides.land_price ? 'User provided' : (assessedLandVal > 0 ? 'LA County Assessor × 2.5x (estimate)' : 'Rule of thumb $100K/unit (verify with broker)'),
     ...base,
-    max_land_price_at_target_irr: maxLandPrice,
-    max_land_price_per_unit: Math.round(maxLandPrice / units),
+    // ── Finance gate: suppress decision outputs when land price is not user-provided ──
+    irr_levered: landPriceProvided ? base.irr_levered : null,
+    max_land_price_at_target_irr: landPriceProvided ? maxLandPrice : null,
+    max_land_price_per_unit: landPriceProvided ? Math.round(maxLandPrice / units) : null,
+    deal_signal: landPriceProvided ? signal : 'NEEDS_INPUT',
+    deal_signal_reason: landPriceProvided ? signalReason : 'User-provided land price required before IRR, deal signal, or max land price can be calculated.',
+    warning: landPriceProvided ? null : 'User-provided land price required before IRR, deal signal, or max land price can be calculated.',
     target_irr: targetIRR,
-    deal_signal: signal,
-    deal_signal_reason: signalReason,
     sensitivity,
     construction_type: opts.constructionType,
     avg_rent_per_unit_mo: opts.rentPerUnit,

@@ -16,7 +16,19 @@
       "Bash(ConvertTo-Json)",
       "Bash(git checkout *)",
       "Bash(npm install *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(gh pr create --title 'sevennova-10x-rebuild: Verified zoning platform, PDF reports, admin API, rate limits, audit trail' --body ' *)",
+      "Bash(where gh *)",
+      "Bash(winget list *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(node *)",
+      "Bash(curl *)",
+      "Bash(start *)",
+      "Bash(python -m json.tool)",
+      "Bash(gh pr *)",
+      "Bash(npm test *)"
     ]
   }
 }

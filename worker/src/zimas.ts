@@ -2,10 +2,12 @@
  * ZIMAS integration — LA City zoning data, no API key required
  *
  * Flow:
- *   1. Geocode address → lat/lon via Nominatim (OpenStreetMap, free)
+ *   1. Geocode address → lat/lon via Census Bureau (TIGER interpolated, side-of-street accurate)
  *   2. Query LA City MapServer for zoning attributes
  *   3. Derive FAR + height from zone code via LAMC lookup table
+ *   4. Query HPOZ overlay (layer 10) in parallel
  */
+import { geocodeAddress } from './geocoder'
 
 export interface ZimasResult {
   source: 'zimas'
@@ -18,6 +20,7 @@ export interface ZimasResult {
   max_far: number | null
   height_limit_ft: number | null
   height_limit_stories: number | null
+  hpoz_name: string | null  // e.g. "Koreatown Proposed", null if not in HPOZ
   raw: Record<string, unknown>
   error?: string
 }
@@ -78,23 +81,9 @@ function lookupFAR(zoneClass: string, heightDistrict: string): number | null {
   return classTable[heightDistrict] ?? classTable['1'] ?? null
 }
 
-// ── GEOCODE ──────────────────────────────────────────────────────────────────
-
-async function geocode(address: string): Promise<{ lat: number; lon: number } | null> {
-  const encoded = encodeURIComponent(address)
-  const url = `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1&countrycodes=us`
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'SevenNova.ai/1.0 (info@sevennova.ai)' },
-  })
-  if (!res.ok) return null
-  const data = await res.json() as Array<{ lat: string; lon: string }>
-  if (!data.length) return null
-  return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
-}
-
 // ── ZIMAS QUERY ──────────────────────────────────────────────────────────────
 
-const ZIMAS_URL = 'https://maps.lacity.org/lahub/rest/services/City_Planning_Department/MapServer/8/query'
+const ZIMAS_BASE = 'https://maps.lacity.org/lahub/rest/services/City_Planning_Department/MapServer'
 
 async function queryZimas(lat: number, lon: number): Promise<Record<string, unknown> | null> {
   const params = new URLSearchParams({
@@ -102,18 +91,49 @@ async function queryZimas(lat: number, lon: number): Promise<Record<string, unkn
     geometryType: 'esriGeometryPoint',
     inSR: '4326',
     spatialRel: 'esriSpatialRelIntersects',
-    // 50ft buffer handles street-centerline geocodes that miss parcel polygons
-    distance: '50',
+    // 75ft buffer: wider than before (was 50ft) to handle street-centerline geocodes
+    // that land mid-street rather than on the parcel centroid
+    distance: '75',
     units: 'esriSRUnit_Foot',
     outFields: 'ZONE_CMPLT,ZONE_CLASS,ZONE_CODE,ZONING_DESCRIPTION,TOOLTIP',
     returnGeometry: 'false',
     f: 'json',
   })
-  const res = await fetch(`${ZIMAS_URL}?${params}`)
+  const res = await fetch(`${ZIMAS_BASE}/8/query?${params}`)
   if (!res.ok) return null
   const data = await res.json() as { features?: Array<{ attributes: Record<string, unknown> }> }
   if (!data.features?.length) return null
   return data.features[0].attributes
+}
+
+// ── HPOZ OVERLAY ─────────────────────────────────────────────────────────────
+// Layer 10 = Historic Preservation Overlay Zones
+// Only queried for residential zones (R prefix) — HPOZ only applies to residential
+
+async function queryHPOZ(lat: number, lon: number): Promise<string | null> {
+  const params = new URLSearchParams({
+    geometry: `${lon},${lat}`,
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    distance: '75',
+    units: 'esriSRUnit_Foot',
+    outFields: 'HPOZ_NAME,NAME,LABEL',
+    returnGeometry: 'false',
+    f: 'json',
+  })
+  try {
+    const res = await fetch(`${ZIMAS_BASE}/10/query?${params}`)
+    if (!res.ok) return null
+    const data = await res.json() as { features?: Array<{ attributes: Record<string, unknown> }> }
+    if (!data.features?.length) return null
+    const attrs = data.features[0].attributes
+    // Different layer versions use different field names
+    const name = String(attrs.HPOZ_NAME ?? attrs.NAME ?? attrs.LABEL ?? '')
+    return name || null
+  } catch {
+    return null
+  }
 }
 
 // ── PUBLIC ENTRY POINT ───────────────────────────────────────────────────────
@@ -124,11 +144,10 @@ export async function fetchZoning(
   state: string,
   zipCode?: string,
 ): Promise<ZimasResult> {
-  const fullAddress = [street, city, state, zipCode].filter(Boolean).join(', ')
-
-  // Step 1: geocode
-  const coords = await geocode(fullAddress)
-  if (!coords) {
+  // Step 1: geocode via Census Bureau (TIGER interpolated) → Nominatim fallback
+  const geo = await geocodeAddress(street, city, state, zipCode)
+  // DEFAULT source means all geocoders failed — cannot proceed
+  if (geo.source === 'DEFAULT') {
     return {
       source: 'zimas',
       lat: 0, lon: 0,
@@ -139,17 +158,24 @@ export async function fetchZoning(
       max_far: null,
       height_limit_ft: null,
       height_limit_stories: null,
+      hpoz_name: null,
       raw: {},
-      error: `Could not geocode: ${fullAddress}`,
+      error: `Could not geocode address`,
     }
   }
 
-  // Step 2: query ZIMAS
-  const attrs = await queryZimas(coords.lat, coords.lon)
+  const { lat, lon } = geo
+
+  // Step 2: query ZIMAS (layer 8) + HPOZ overlay (layer 10) in parallel
+  const [attrs, hpozName] = await Promise.all([
+    queryZimas(lat, lon),
+    queryHPOZ(lat, lon),
+  ])
+
   if (!attrs) {
     return {
       source: 'zimas',
-      lat: coords.lat, lon: coords.lon,
+      lat, lon,
       zone_code: 'UNKNOWN',
       zone_class: 'UNKNOWN',
       height_district: '1',
@@ -157,14 +183,22 @@ export async function fetchZoning(
       max_far: null,
       height_limit_ft: null,
       height_limit_stories: null,
+      hpoz_name: hpozName,
       raw: {},
       error: 'ZIMAS returned no features for these coordinates',
     }
   }
 
   // Step 3: parse and derive
-  const zoneCode = String(attrs.ZONE_CMPLT ?? attrs.TOOLTIP ?? 'UNKNOWN')
+  let zoneCode = String(attrs.ZONE_CMPLT ?? attrs.TOOLTIP ?? 'UNKNOWN')
     .replace(/^Zone:\s*/i, '').trim()
+
+  // Append HPOZ suffix if parcel is in an HPOZ and the zone code doesn't already include it
+  // Standard LA notation: "R2-1-HPOZ" — the dash-HPOZ suffix is the official overlay designation
+  if (hpozName && !zoneCode.includes('HPOZ')) {
+    zoneCode = `${zoneCode}-HPOZ`
+  }
+
   const zoneClass = parseZoneClass(zoneCode)
   const heightDistrict = parseHeightDistrict(zoneCode)
   const heightInfo = HEIGHT_DISTRICT[heightDistrict] ?? HEIGHT_DISTRICT['1']
@@ -172,8 +206,8 @@ export async function fetchZoning(
 
   return {
     source: 'zimas',
-    lat: coords.lat,
-    lon: coords.lon,
+    lat,
+    lon,
     zone_code: zoneCode,
     zone_class: zoneClass,
     height_district: heightDistrict,
@@ -181,6 +215,7 @@ export async function fetchZoning(
     max_far: maxFAR,
     height_limit_ft: heightInfo.ft,
     height_limit_stories: heightInfo.stories,
+    hpoz_name: hpozName,
     raw: attrs,
   }
 }

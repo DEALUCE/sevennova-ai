@@ -18,48 +18,47 @@ const S = {
 const REPORTS = [
   {
     tier: 'basic',
-    label: 'Basic',
+    label: 'Starter',
     price: '$49',
-    desc: 'Essential analysis for quick deal screening.',
+    desc: 'Zoning screening — quick deal filter.',
     features: [
-      'Zoning code + APN lookup',
-      'TOC tier & transit distance',
-      'LADBS violation check',
-      'Assessed value + Prop 13',
-      'ADU eligibility',
-      'PDF export',
+      'Zoning code + FAR + height limit',
+      'Entitlement eligibility flags',
+      'By-right units estimate',
+      'LADBS permit & violation check',
+      'Seismic + flood risk',
+      'PDF download',
     ],
   },
   {
     tier: 'full',
-    label: 'Full',
+    label: 'Pro',
     price: '$199',
-    desc: 'Complete institutional analysis. The product.',
+    desc: 'Full development feasibility. The product.',
     features: [
-      'Everything in Basic',
-      'All 15 AI skills',
-      'Ensemble valuation model',
-      'Distress score + DSCR estimate',
-      'Entitlement pathway analysis',
-      'Climate risk + insurance stress',
-      'Investment thesis + deal score',
-      'Strategic recommendations',
+      'Everything in Starter',
+      'All entitlement pathways + LAMC citations',
+      'Developer pro forma (IRR · NOI · TDC)',
+      'Max land price @ 20% target IRR',
+      '5-scenario sensitivity analysis',
+      'Stackable incentives (TOC + LIHTC + HOME)',
+      'Distress signals + DSCR estimate',
+      'Climate risk + insurance stress score',
     ],
     featured: true,
   },
   {
     tier: 'institutional',
-    label: 'Institutional',
+    label: 'Developer',
     price: '$499',
-    desc: 'For fund managers and repeat investors.',
+    desc: 'Institutional package — fund managers & GPs.',
     features: [
-      'Everything in Full',
-      'Market comparables (5 pulls)',
-      'Legal entity ownership graph',
-      'Title + lien scan',
-      'Seismic retrofit assessment',
+      'Everything in Pro',
+      'AI valuation ensemble (XGBoost + LightGBM + CatBoost)',
+      'Market comparable analysis',
+      'Legal entity graph',
       'Analyst review notes',
-      'Priority email delivery',
+      'City Evidence Package',
     ],
   },
 ];
@@ -140,7 +139,7 @@ export default function PricingPage() {
             Pay Per Report.<br /><span style={{ color: S.accent }}>Or Subscribe.</span>
           </h1>
           <p style={{ color: S.textDim, fontSize: '0.9rem', maxWidth: 500, margin: '0 auto', lineHeight: 1.7 }}>
-            Institutional-grade intelligence from $49. No subscriptions required to get started.
+            Developer-grade feasibility reports from $49. Entitlement pathways, pro forma, IRR — no subscription required.
           </p>
         </div>
 

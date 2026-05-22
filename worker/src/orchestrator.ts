@@ -1318,6 +1318,7 @@ export async function generateReport(
       const landPrice = Number(parcelData.last_sale_price ?? 0) || undefined
       return runProfitModel({
         land_price: landPrice ?? (recommendedUnits * 100_000),
+        land_price_provided: false,  // orchestrator land price is always estimated, never user-supplied — finance gate active
         buildable_units: recommendedUnits,
         hud_fmr_2br: (parcelData.hud_fmr_2br as number | null) ?? undefined,
         permit_fees: entitlementDetailed.estimated_permit_fees,

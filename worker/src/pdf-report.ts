@@ -38,6 +38,7 @@ function statusColor(status?: string) {
     case 'UNAVAILABLE':        return C_RED
     case 'NEEDS_HUMAN_REVIEW': return C_AMBER
     case 'INFERRED':           return C_AMBER
+    case 'MODEL_ESTIMATE':     return C_CYAN
     default:                   return C_GRAY
   }
 }
@@ -48,7 +49,29 @@ function statusBadgeText(status?: string): string {
     case 'UNAVAILABLE':        return 'UNAVAILABLE'
     case 'NEEDS_HUMAN_REVIEW': return 'NEEDS REVIEW'
     case 'INFERRED':           return 'AI ESTIMATE'
+    case 'MODEL_ESTIMATE':     return 'MODEL ESTIMATE'
     default:                   return 'UNVERIFIED'
+  }
+}
+
+function tierLabel(tier: string): string {
+  switch (tier.toLowerCase()) {
+    case 'developer':     return 'DEVELOPER REPORT'
+    case 'institutional': return 'INSTITUTIONAL REPORT'
+    case 'pro':           return 'PRO REPORT'
+    case 'full':          return 'FULL REPORT'
+    case 'basic':         return 'STARTER REPORT'
+    default:              return tier.toUpperCase() + ' REPORT'
+  }
+}
+
+function tierBadgeColor(tier: string) {
+  switch (tier.toLowerCase()) {
+    case 'developer':
+    case 'institutional': return C_GREEN
+    case 'pro':
+    case 'full':          return C_CYAN
+    default:              return C_MED
   }
 }
 
@@ -396,6 +419,145 @@ async function fetchStreetView(address: string, apiKey: string): Promise<Uint8Ar
   }
 }
 
+// ── EXECUTIVE SUMMARY CARD ────────────────────────────────────────────────────
+function drawExecutiveSummaryPage(w: Writer, bold: PDFFont, reg: PDFFont, report: PropertyReport): void {
+  w.newPage()
+
+  // Page header band
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: PAGE_W, height: 30, color: C_BG2 })
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: 4, height: 30, color: C_CYAN })
+  w.page.drawText('EXECUTIVE SUMMARY', { x: MARGIN + 10, y: w.y + 10, size: 12, font: bold, color: C_NAVY })
+  w.page.drawText('Key findings at a glance — full analysis follows on subsequent pages', {
+    x: MARGIN + 10, y: w.y - 3, size: 7.5, font: reg, color: C_GRAY,
+  })
+  w.y -= 38
+
+  const ea  = report.entitlement_detailed
+  const pmR = report.profit_model_data
+  const z   = report.zoning
+
+  // ── 6-cell metric grid ──────────────────────────────────────────────────────
+  const metrics: [string, string][] = [
+    ['ZONING CODE',        safeStr(z?.zoning_code?.value)],
+    ['TOC TIER',           safeStr(z?.toc_tier?.value)],
+    ['MAX FAR',            safeStr(z?.max_far?.value)],
+    ['HEIGHT LIMIT (FT)',  safeStr(z?.height_limit_ft?.value)],
+    ['UNITS — BY RIGHT',   ea?.units_by_right != null ? String(ea.units_by_right) : '-'],
+    ['UNITS — MAX (ANY)',  ea?.units_max_any_path != null ? String(ea.units_max_any_path) : '-'],
+  ]
+
+  const cols = 3
+  const cellW = Math.floor(CONTENT_W / cols)
+  const cellH = 44
+  const gridRows = Math.ceil(metrics.length / cols)
+
+  for (let i = 0; i < metrics.length; i++) {
+    const col = i % cols
+    const row = Math.floor(i / cols)
+    const cx  = MARGIN + col * cellW
+    const cy  = w.y - row * (cellH + 4)
+
+    w.page.drawRectangle({ x: cx + 1, y: cy - cellH + 4, width: cellW - 4, height: cellH, color: C_BG })
+    w.page.drawText(metrics[i][0], { x: cx + 7, y: cy - 6, size: 6.5, font: bold, color: C_GRAY })
+    w.page.drawText(metrics[i][1].slice(0, 20), { x: cx + 7, y: cy - 20, size: 11, font: bold, color: C_DARK })
+  }
+  w.y -= gridRows * (cellH + 4) + 10
+
+  // ── Recommended entitlement path card ──────────────────────────────────────
+  if (ea?.recommended_path) {
+    const rp = ea.recommended_path
+    w.ensure(56)
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 50, width: CONTENT_W, height: 56, color: C_BG2 })
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 50, width: 4, height: 56, color: C_CYAN })
+    w.page.drawText('RECOMMENDED ENTITLEMENT PATH', { x: MARGIN + 10, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+    w.page.drawText(rp.name, { x: MARGIN + 10, y: w.y - 18, size: 12, font: bold, color: C_CYAN })
+    const tMin = rp.timeline_months?.min ?? '?'
+    const tMax = rp.timeline_months?.max ?? '?'
+    w.page.drawText(
+      `${tMin}–${tMax} months  ·  ${rp.max_units} units max  ·  ${rp.affordable_requirement_pct}% affordable required`,
+      { x: MARGIN + 10, y: w.y - 32, size: 8.5, font: reg, color: C_MED },
+    )
+    if (rp.citation?.section) {
+      w.page.drawText(`Citation: ${rp.citation.source} ${rp.citation.section}`, { x: MARGIN + 10, y: w.y - 43, size: 7, font: reg, color: C_GRAY })
+    }
+    w.y -= 62
+  }
+
+  // ── Deal signal + IRR row ───────────────────────────────────────────────────
+  if (pmR) {
+    const pm = pmR as unknown as Record<string, unknown>
+    const signal = (pm.deal_signal ?? '') as string
+    const signalColor = signal === 'GO' ? C_GREEN : signal === 'BORDERLINE' ? C_AMBER : C_RED
+    w.ensure(54)
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 48, width: CONTENT_W, height: 54, color: C_BG })
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 48, width: 4, height: 54, color: signalColor })
+
+    // Deal signal
+    w.page.drawText('DEAL SIGNAL', { x: MARGIN + 10, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+    w.page.drawText(String(signal), { x: MARGIN + 10, y: w.y - 20, size: 16, font: bold, color: signalColor })
+
+    // IRR (null = finance gate active: land price not user-provided)
+    const irrVal = pm.irr_levered as number | null
+    const irrGated = irrVal === null || irrVal === undefined
+    const irr = irrGated ? 0 : irrVal
+    const irrColor = irrGated ? C_GRAY : irr >= 20 ? C_GREEN : irr >= 12 ? C_AMBER : C_RED
+    w.page.drawText('LEVERED IRR', { x: MARGIN + 120, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+    w.page.drawText(irrGated ? 'NEEDS INPUT' : irr === -99 ? 'N/A' : `${irr}%`,
+      { x: MARGIN + 120, y: w.y - 20, size: irrGated ? 9 : 16, font: bold, color: irrColor })
+
+    // Max land price (null = finance gate active)
+    const maxLandVal = pm.max_land_price_at_target_irr as number | null
+    const maxLandGated = maxLandVal === null || maxLandVal === undefined
+    const maxLand = maxLandGated ? 0 : maxLandVal
+    w.page.drawText('MAX LAND @ 20% IRR', { x: MARGIN + 230, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+    w.page.drawText(maxLandGated ? 'NEEDS INPUT' : maxLand >= 1_000_000 ? `$${(maxLand / 1_000_000).toFixed(2)}M` : `$${maxLand.toLocaleString()}`,
+      { x: MARGIN + 230, y: w.y - 20, size: maxLandGated ? 9 : 16, font: bold, color: maxLandGated ? C_GRAY : C_GREEN })
+
+    // Confidence
+    w.page.drawText('MODEL CONFIDENCE', { x: MARGIN + 390, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+    const conf = (pm.confidence ?? 'LOW') as string
+    const confColor = conf === 'HIGH' ? C_GREEN : conf === 'MEDIUM' ? C_AMBER : C_RED
+    w.page.drawText(conf, { x: MARGIN + 390, y: w.y - 20, size: 13, font: bold, color: confColor })
+
+    // Deal signal reason (wrap to 2 lines at ~115 chars each, word boundary)
+    if (pm.deal_signal_reason) {
+      const fullReason = String(pm.deal_signal_reason)
+      const LINE_LEN = 115
+      if (fullReason.length <= LINE_LEN) {
+        w.page.drawText(fullReason, { x: MARGIN + 10, y: w.y - 36, size: 7.5, font: reg, color: C_MED })
+      } else {
+        const split = fullReason.lastIndexOf(' ', LINE_LEN)
+        const line1 = fullReason.slice(0, split > 0 ? split : LINE_LEN)
+        const rest  = fullReason.slice(line1.length + 1)
+        const line2 = rest.length > LINE_LEN ? rest.slice(0, rest.lastIndexOf(' ', LINE_LEN) || LINE_LEN) + '…' : rest
+        w.page.drawText(line1, { x: MARGIN + 10, y: w.y - 36, size: 7.5, font: reg, color: C_MED })
+        w.page.drawText(line2, { x: MARGIN + 10, y: w.y - 47, size: 7.5, font: reg, color: C_MED })
+      }
+    }
+    w.y -= 60
+  }
+
+  // ── Human review warning ────────────────────────────────────────────────────
+  const needsReview = !!(ea?.human_review_required || (report.profit_model_data as unknown as Record<string, unknown>)?.human_review_required)
+  if (needsReview) {
+    w.ensure(44)
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 38, width: CONTENT_W, height: 44, color: rgb(0.75, 0.44, 0.02), opacity: 0.07 })
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 38, width: 4, height: 44, color: C_AMBER })
+    w.page.drawText('HUMAN REVIEW REQUIRED', { x: MARGIN + 10, y: w.y - 4, size: 9, font: bold, color: C_AMBER })
+    w.page.drawText(
+      'One or more parcel inputs are missing, inferred, or uncertain. Entitlement eligibility flags and pro forma figures are for ' +
+      'screening only. Verify with a licensed land use attorney, planning consultant, and licensed appraiser before reliance.',
+      { x: MARGIN + 10, y: w.y - 18, size: 7.5, font: reg, color: C_DARK },
+    )
+    w.y -= 50
+  }
+
+  w.gap(6)
+  w.hline(C_LGRAY)
+  w.gap(4)
+  w.text('Full analysis begins on the following page — Verified Data, Entitlement Pathways, Pro Forma, Source Registry.', { size: 8, color: C_GRAY })
+}
+
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 export async function generatePDFReport(
   report: PropertyReport,
@@ -418,18 +580,40 @@ export async function generatePDFReport(
   }
 
   // ── COVER PAGE ──────────────────────────────────────────────────────────────
-  // Navy header band
-  w.page.drawRectangle({ x: 0, y: PAGE_H - 110, width: PAGE_W, height: 110, color: C_NAVY })
-  w.page.drawText('SevenNova', { x: MARGIN, y: PAGE_H - 42, size: 20, font: bold, color: C_CYAN })
-  w.page.drawText('RiskCore', { x: MARGIN + 118, y: PAGE_H - 42, size: 20, font: bold, color: C_WHITE })
-  w.page.drawText('Verified Los Angeles Property Risk & Zoning Evidence Pack', {
-    x: MARGIN, y: PAGE_H - 62, size: 10, font: reg, color: rgb(0.75, 0.78, 0.82),
+  // Deep navy header band
+  w.page.drawRectangle({ x: 0, y: PAGE_H - 120, width: PAGE_W, height: 120, color: C_NAVY })
+
+  // Brand line: SevenNova.ai
+  w.page.drawText('SEVENNOVA', { x: MARGIN, y: PAGE_H - 38, size: 18, font: bold, color: C_CYAN })
+  w.page.drawText('.AI', { x: MARGIN + 118, y: PAGE_H - 38, size: 14, font: bold, color: C_WHITE })
+
+  // Report title
+  w.page.drawText('LA DEVELOPMENT FEASIBILITY REPORT', {
+    x: MARGIN, y: PAGE_H - 60, size: 12, font: bold, color: C_WHITE,
   })
-  w.page.drawText('FOR LENDERS, DEVELOPERS, AND ACQUISITION TEAMS — NOT A LICENSED APPRAISAL', {
-    x: MARGIN, y: PAGE_H - 78, size: 7.5, font: bold, color: rgb(0.55, 0.58, 0.62),
+
+  // Subtitle
+  w.page.drawText('Entitlement Pathways · Developer Pro Forma · IRR Analysis · LA Public Record Verified', {
+    x: MARGIN, y: PAGE_H - 76, size: 8, font: reg, color: rgb(0.65, 0.70, 0.78),
   })
+
+  // Tier badge — right side of header
+  const tLabel = tierLabel(report.tier)
+  const tColor = tierBadgeColor(report.tier)
+  const tBadgeW = 130
+  w.page.drawRectangle({ x: PAGE_W - MARGIN - tBadgeW, y: PAGE_H - 76, width: tBadgeW, height: 18, color: tColor, opacity: 0.18 })
+  w.page.drawRectangle({ x: PAGE_W - MARGIN - tBadgeW, y: PAGE_H - 76, width: tBadgeW, height: 18, borderColor: tColor, borderWidth: 0.8, opacity: 0 })
+  w.page.drawText(tLabel, {
+    x: PAGE_W - MARGIN - tBadgeW + 6, y: PAGE_H - 66, size: 8, font: bold, color: tColor,
+  })
+
+  // Disclaimer line in header
+  w.page.drawText('PRELIMINARY FEASIBILITY ANALYSIS — NOT A LICENSED APPRAISAL OR LEGAL OPINION', {
+    x: MARGIN, y: PAGE_H - 93, size: 6.5, font: bold, color: rgb(0.45, 0.50, 0.58),
+  })
+
   // Cyan accent line
-  w.page.drawRectangle({ x: 0, y: PAGE_H - 115, width: PAGE_W, height: 5, color: C_CYAN })
+  w.page.drawRectangle({ x: 0, y: PAGE_H - 125, width: PAGE_W, height: 5, color: C_CYAN })
 
   w.y = PAGE_H - 135
 
@@ -470,7 +654,7 @@ export async function generatePDFReport(
 
   // Report metadata grid
   const dealCol = report.deal_score === 'A' ? C_GREEN : report.deal_score === 'B' ? C_CYAN : report.deal_score >= 'D' ? C_RED : C_AMBER
-  w.kv('Report Tier',     report.tier.toUpperCase())
+  w.kv('Report Tier',     tierLabel(report.tier), tierBadgeColor(report.tier))
   w.kv('Deal Score',      `${report.deal_score}  —  ${report.deal_score_rationale}`, dealCol)
   w.kv('Data Confidence', `${report.overall_confidence}%  ${report.overall_confidence < 50 ? '(LOW — see Human Review flags)' : ''}`,
     report.overall_confidence < 50 ? C_RED : C_GREEN)
@@ -482,24 +666,27 @@ export async function generatePDFReport(
   w.gap(14)
 
   // Cover disclaimer box
-  w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: CONTENT_W, height: 60, color: C_BG2 })
-  w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: 3, height: 60, color: C_AMBER })
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 62, width: CONTENT_W, height: 70, color: C_BG2 })
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 62, width: 3, height: 70, color: C_AMBER })
   w.y -= 6
-  w.text('DATA PROVENANCE STATEMENT', { size: 8, font: bold, color: C_AMBER, indent: 8 })
+  w.text('DATA PROVENANCE & REPORT STATUS', { size: 8, font: bold, color: C_AMBER, indent: 8 })
   w.text(
-    'Fields marked VERIFIED are sourced from live public-record APIs (ZIMAS, LADBS, FEMA, USGS, CalFire, Census, HUD). ' +
-    'Fields marked AI ESTIMATE are model-generated and have NOT been verified against a primary source. ' +
-    'AI estimates are shown in a separate section and must not be used as sole basis for lending or investment decisions. ' +
-    'This report is not a licensed appraisal and is not legal advice.',
+    'VERIFIED fields are sourced from live public-record government APIs (ZIMAS, LADBS, FEMA, USGS, CalFire, Census, HUD). ' +
+    'AI ESTIMATE fields are model-generated and have not been verified against a primary source — quarantined to a separate section. ' +
+    'MODEL ESTIMATE fields (Pro Forma, IRR) are based on default market assumptions and require replacement with actual bids, appraisal, and lender terms. ' +
+    'This report is preliminary feasibility analysis only. Not a licensed appraisal, legal opinion, architectural opinion, or permit approval guarantee.',
     { size: 7.5, color: C_DARK, indent: 8, maxW: CONTENT_W - 16 },
   )
 
-  // ── PAGE 2 — SOURCE CONFIDENCE TABLE ─────────────────────────────────────
+  // ── PAGE 2 — EXECUTIVE SUMMARY CARD ──────────────────────────────────────
+  drawExecutiveSummaryPage(w, bold, reg, report)
+
+  // ── PAGE 3 — SOURCE CONFIDENCE TABLE ─────────────────────────────────────
   if (report.source_registry?.length) {
     drawSourceConfidencePage(w, bold, reg, mono, report.source_registry, report.manual_review_required ?? false)
   }
 
-  // ── PAGE 3 — VERIFIED DATA SUMMARY ────────────────────────────────────────
+  // ── PAGE 4 — VERIFIED DATA SUMMARY ────────────────────────────────────────
   w.newPage()
   w.heading('Verified Data Summary — Public Record Sources Only')
   w.text(
@@ -611,59 +798,124 @@ export async function generatePDFReport(
   if (report.entitlement_detailed) {
     const ed = report.entitlement_detailed
     w.heading('Entitlement Strategy — Pathway Analysis')
-    w.text('Ranked development pathways based on LA zoning code and state statutes. Every conclusion cites the applicable LAMC section or California statute.', { size: 8.5, color: C_MED })
+    w.text('Ranked development pathways based on LA zoning code and state statutes. Every eligibility flag cites the applicable LAMC section or California statute.', { size: 8.5, color: C_MED })
     w.gap(6)
+
+    // Human review banner
+    if (ed.human_review_required) {
+      w.ensure(38)
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 32, width: CONTENT_W, height: 38, color: rgb(0.75, 0.44, 0.02), opacity: 0.07 })
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 32, width: 3, height: 38, color: C_AMBER })
+      w.page.drawText('HUMAN REVIEW REQUIRED', { x: MARGIN + 8, y: w.y - 3, size: 8.5, font: bold, color: C_AMBER })
+      w.page.drawText(
+        'One or more required parcel inputs are missing, inferred, or uncertain. Eligibility flags are for screening only, not a final legal determination. ' +
+        'Verify with a licensed land use attorney or planning consultant.',
+        { x: MARGIN + 8, y: w.y - 16, size: 7.5, font: reg, color: C_DARK },
+      )
+      w.y -= 44
+    }
 
     // Recommended path highlight box
     if (ed.recommended_path) {
       const rp = ed.recommended_path
-      w.subheading(`Recommended: ${rp.name}`)
-      w.text(`Timeline: ${rp.timeline_months?.min ?? '?'}–${rp.timeline_months?.max ?? '?'} months  |  Max Units: ${rp.max_units}  |  Affordable Required: ${rp.affordable_requirement_pct}%`, { size: 9, color: C_CYAN })
-      w.text(`Citation: ${rp.citation.source} ${rp.citation.section}`, { size: 8, color: C_GRAY })
-      w.gap(4)
+      w.ensure(58)
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: CONTENT_W, height: 58, color: C_BG2 })
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 52, width: 4, height: 58, color: C_CYAN })
+      w.page.drawText('RECOMMENDED PATH', { x: MARGIN + 10, y: w.y - 4, size: 7, font: bold, color: C_GRAY })
+      w.page.drawText(rp.name, { x: MARGIN + 10, y: w.y - 18, size: 12, font: bold, color: C_CYAN })
+      const tMin = rp.timeline_months?.min ?? '?'
+      const tMax = rp.timeline_months?.max ?? '?'
+      w.page.drawText(
+        `${tMin}–${tMax} months  ·  ${rp.max_units} units max  ·  ${rp.affordable_requirement_pct}% affordable required`,
+        { x: MARGIN + 10, y: w.y - 32, size: 9, font: reg, color: C_MED },
+      )
+      if (rp.citation?.section) {
+        w.page.drawText(`Citation: ${rp.citation.source} ${rp.citation.section}`, { x: MARGIN + 10, y: w.y - 44, size: 7.5, font: reg, color: C_GRAY })
+      }
+      w.y -= 60
     }
 
-    // Summary metrics row
+    // Summary metrics
+    w.gap(4)
     const metricItems = [
       `By-Right Eligible: ${ed.by_right_eligible ? 'YES' : 'NO'}`,
       `Streamlined Eligible: ${ed.streamlined_eligible ? 'YES' : 'NO'}`,
-      `Risk Score: ${ed.entitlement_risk_score}/10`,
+      `Entitlement Risk Score: ${ed.entitlement_risk_score}/10  (10 = highest risk)`,
       `Est. Permit Fees: $${(ed.estimated_permit_fees ?? 0).toLocaleString()}`,
       `Max Units (any path): ${ed.units_max_any_path}`,
     ]
     for (const item of metricItems) w.bullet(item)
-    w.gap(6)
+    w.gap(8)
 
     // Pathway comparison table
+    w.subheading('Pathway Comparison')
     w.tableHeader(['PATHWAY', 'CATEGORY', 'TIMELINE', 'MAX UNITS', 'AFFORDABLE %', 'CITATION'], [2, 120, 200, 280, 350, 420])
     for (const p of ed.pathways) {
-      const row = [
-        p.name.substring(0, 25),
-        p.category,
-        p.timeline_months ? `${p.timeline_months.min}–${p.timeline_months.max}mo` : '?',
-        String(p.max_units),
-        `${p.affordable_requirement_pct}%`,
-        `${p.citation.source} ${p.citation.section}`.substring(0, 30),
-      ]
-      w.simpleRow(row, [2, 120, 200, 280, 350, 420])
+      const tLabel = p.timeline_months ? `${p.timeline_months.min}–${p.timeline_months.max}mo` : '?'
+      const cLabel = `${p.citation.source} ${p.citation.section}`.substring(0, 30)
+      w.simpleRow([p.name.substring(0, 25), p.category, tLabel, String(p.max_units), `${p.affordable_requirement_pct}%`, cLabel], [2, 120, 200, 280, 350, 420])
     }
-    w.gap(6)
+    w.gap(8)
 
-    // Stacked incentives
+    // Stacked incentives — with verification warning
     if (ed.stacked_incentives.length > 0) {
-      w.subheading('Stackable Incentives')
+      w.subheading('Potentially Stackable Incentive Programs')
+      w.ensure(32)
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 26, width: CONTENT_W, height: 30, color: C_BG2 })
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 26, width: 3, height: 30, color: C_AMBER })
+      w.page.drawText('ELIGIBILITY WARNING', { x: MARGIN + 8, y: w.y - 3, size: 7.5, font: bold, color: C_AMBER })
+      w.page.drawText(
+        'The following programs may apply to this parcel based on zoning and TOC eligibility. ' +
+        'Subsidy estimates are illustrative only. Actual eligibility, award amounts, and funding availability require application and approval.',
+        { x: MARGIN + 8, y: w.y - 15, size: 7, font: reg, color: C_DARK },
+      )
+      w.y -= 34
       for (const inc of ed.stacked_incentives) {
-        w.bullet(`${inc.program} (${inc.type}) — ${inc.description.substring(0, 80)} | Est. $${(inc.estimated_subsidy_per_unit ?? 0).toLocaleString()}/unit | Citation: ${inc.citation.source} ${inc.citation.section}`)
+        w.bullet(`${inc.program} (${inc.type})  —  Est. $${(inc.estimated_subsidy_per_unit ?? 0).toLocaleString()}/unit  |  Stacks with: ${inc.stacks_with.join(', ')}  |  Cite: ${inc.citation.source} ${inc.citation.section}`)
       }
     }
+
+    // data_basis note
+    w.gap(6)
+    w.hline(C_LGRAY)
+    w.text(`DATA BASIS: ${ed.data_basis}`, { size: 7, color: C_GRAY })
     w.gap(8)
   }
 
   // ── DEVELOPER PRO FORMA ────────────────────────────────────────────────────
   if (report.profit_model_data && 'total_development_cost' in report.profit_model_data) {
     const pm = report.profit_model_data
+    const pmAny = pm as unknown as Record<string, unknown>
     w.heading('Developer Pro Forma')
-    w.text('Estimated returns for market-rate development. All figures are estimates — verify with licensed contractor, broker, and lender before commitment.', { size: 8.5, color: C_MED })
+    w.text('Market-rate development feasibility. Replace default assumptions with actual land price, rent, and contractor bids before any investment commitment.', { size: 8.5, color: C_MED })
+    w.gap(4)
+
+    // MODEL ESTIMATE status banner
+    w.ensure(26)
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 20, width: CONTENT_W, height: 26, color: C_BG2 })
+    w.page.drawRectangle({ x: MARGIN, y: w.y - 20, width: 3, height: 26, color: C_CYAN })
+    w.page.drawText('MODEL ESTIMATE', { x: MARGIN + 8, y: w.y - 3, size: 8, font: bold, color: C_CYAN })
+    w.page.drawText(
+      'All figures are model-estimated using default LA market assumptions. ' +
+      `Confidence: ${pm.confidence}. Not verified bids, appraisal, lender quote, or final underwriting.`,
+      { x: MARGIN + 110, y: w.y - 3, size: 7.5, font: reg, color: C_MED },
+    )
+    w.y -= 30
+
+    // Human review banner
+    if (pmAny.human_review_required) {
+      w.ensure(30)
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 24, width: CONTENT_W, height: 30, color: rgb(0.75, 0.44, 0.02), opacity: 0.07 })
+      w.page.drawRectangle({ x: MARGIN, y: w.y - 24, width: 3, height: 30, color: C_AMBER })
+      w.page.drawText('HUMAN REVIEW REQUIRED', { x: MARGIN + 8, y: w.y - 3, size: 8, font: bold, color: C_AMBER })
+      w.page.drawText(
+        'Land price, rent, and/or construction type are default assumptions, not verified inputs. ' +
+        'Replace with your actual deal parameters before reliance on IRR or max land price.',
+        { x: MARGIN + 8, y: w.y - 15, size: 7.5, font: reg, color: C_DARK },
+      )
+      w.y -= 36
+    }
+
     w.gap(4)
 
     // Deal signal banner
@@ -695,7 +947,7 @@ export async function generatePDFReport(
       ['Exit Value (4.5% cap)', `$${pm.exit_value.toLocaleString()} ($${pm.exit_price_per_unit.toLocaleString()}/unit)`],
       ['Debt (65% LTC)', `$${pm.debt_amount.toLocaleString()}`],
       ['Equity Required', `$${pm.equity_required.toLocaleString()}`],
-      ['IRR (Levered)', `${pm.irr_levered}%`],
+      ['IRR (Levered)', pm.irr_levered === null || pm.irr_levered === undefined ? 'NEEDS INPUT — land price required' : `${pm.irr_levered}%`],
       ['Equity Multiple', `${pm.equity_multiple}x`],
       ['Cash-on-Cash Yr 1', `${pm.cash_on_cash_yr1}%`],
     ]
@@ -703,9 +955,13 @@ export async function generatePDFReport(
     for (const [label, val] of returnRows) w.simpleRow([label, val], [2, 280])
     w.gap(6)
 
-    // Max offer price
+    // Max offer price (suppressed when finance gate active)
     w.subheading('Max Supportable Land Price @ 20% Target IRR')
-    w.text(`$${pm.max_land_price_at_target_irr.toLocaleString()} total  |  $${pm.max_land_price_per_unit.toLocaleString()}/unit`, { size: 11, color: pm.deal_signal === 'GO' ? C_GREEN : C_RED })
+    if (pm.max_land_price_at_target_irr === null || pm.max_land_price_at_target_irr === undefined) {
+      w.text('NEEDS INPUT — user-provided land price required before max land price can be calculated.', { size: 9, color: C_GRAY })
+    } else {
+      w.text(`$${pm.max_land_price_at_target_irr.toLocaleString()} total  |  $${(pm.max_land_price_per_unit ?? 0).toLocaleString()}/unit`, { size: 11, color: pm.deal_signal === 'GO' ? C_GREEN : C_RED })
+    }
     w.gap(4)
 
     // Sensitivity
@@ -723,7 +979,12 @@ export async function generatePDFReport(
       }
     }
     w.gap(4)
-    if ((pm as unknown as Record<string, unknown>).development_note) w.text(String((pm as unknown as Record<string, unknown>).development_note), { size: 8, color: C_AMBER })
+    if (pmAny.development_note) w.text(String(pmAny.development_note), { size: 8, color: C_AMBER })
+
+    // data_basis note
+    w.gap(6)
+    w.hline(C_LGRAY)
+    if (pmAny.data_basis) w.text(`DATA BASIS: ${String(pmAny.data_basis)}`, { size: 7, color: C_GRAY })
     w.gap(8)
   }
 
@@ -870,34 +1131,88 @@ export async function generatePDFReport(
     w.y -= 12
   }
 
-  // ── FOOTER ON EVERY PAGE ──────────────────────────────────────────────────
+  // ── DISCLAIMER PAGE ───────────────────────────────────────────────────────
+  w.newPage()
+
+  // Header band for disclaimer
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: PAGE_W, height: 30, color: C_NAVY })
+  w.page.drawRectangle({ x: 0, y: w.y - 4, width: 4, height: 30, color: C_AMBER })
+  w.page.drawText('DISCLAIMER & LEGAL NOTICE', { x: MARGIN + 10, y: w.y + 10, size: 11, font: bold, color: C_WHITE })
+  w.page.drawText('Read before relying on any information contained in this report', {
+    x: MARGIN + 10, y: w.y - 3, size: 7.5, font: reg, color: rgb(0.65, 0.68, 0.75),
+  })
+  w.y -= 40
+
+  const disclaimerItems: [string, string][] = [
+    [
+      'PRELIMINARY FEASIBILITY ONLY',
+      'This report is a preliminary development feasibility analysis tool intended for initial screening purposes only. It is not a final determination of development potential, permitting capacity, or investment viability.',
+    ],
+    [
+      'NOT LEGAL ADVICE',
+      'Nothing in this report constitutes legal advice. All zoning compliance determinations, entitlement eligibility conclusions, and code violation assessments require review by a licensed California real estate attorney. Statute citations are for reference only.',
+    ],
+    [
+      'NOT ARCHITECTURAL OR ENGINEERING OPINION',
+      'This report does not constitute an architectural opinion, structural engineering assessment, geotechnical evaluation, or environmental impact analysis. Site-specific constraints require evaluation by licensed professionals.',
+    ],
+    [
+      'NO PERMIT APPROVAL GUARANTEE',
+      'Identification of an entitlement pathway or eligibility flag does not guarantee permit approval by the City of Los Angeles, LA County, or any other agency. Approvals are subject to change in law, policy, and discretionary conditions.',
+    ],
+    [
+      'NOT A LICENSED APPRAISAL',
+      'This report does not constitute a licensed real estate appraisal, broker price opinion, or formal valuation. Pro forma figures, IRR estimates, and max land price calculations are model-generated using default assumptions and have not been verified against actual contractor bids, appraisal, or lender terms.',
+    ],
+    [
+      'VERIFY WITH CITY AND LICENSED PROFESSIONALS',
+      'Before relying on any finding in this report for acquisition, lending, permitting, or investment decisions, verify all data directly with the City of Los Angeles Planning Department, LADBS, and licensed real estate, legal, and financial professionals.',
+    ],
+    [
+      'DATA PROVENANCE',
+      'VERIFIED fields are sourced from live public-record government APIs at the time of report generation. UNAVAILABLE means the source query failed — not that the condition does not exist. AI ESTIMATE fields are model-generated and must be independently verified. MODEL ESTIMATE fields (pro forma) use default LA market assumptions.',
+    ],
+    [
+      'MLS DATA EXCLUDED',
+      'No comparable sales data is included in this report. Market value conclusions require a licensed MLS data feed and a licensed appraiser or broker. SevenNova does not provide licensed appraisal services.',
+    ],
+  ]
+
+  if (report.disclaimer) {
+    w.text(report.disclaimer, { size: 9 })
+    w.gap(10)
+    w.hline()
+    w.gap(6)
+  }
+
+  for (const [title, body] of disclaimerItems) {
+    w.ensure(50)
+    w.page.drawText(title, { x: MARGIN, y: w.y, size: 8.5, font: bold, color: C_DARK })
+    w.y -= 13
+    w.text(body, { size: 8.5, color: C_MED })
+    w.gap(8)
+  }
+
+  // Closing statement box
+  w.ensure(44)
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 38, width: CONTENT_W, height: 44, color: C_BG2 })
+  w.page.drawRectangle({ x: MARGIN, y: w.y - 38, width: 4, height: 44, color: C_NAVY })
+  w.page.drawText('SevenNova.ai — LA Development Intelligence Platform', { x: MARGIN + 10, y: w.y - 6, size: 9, font: bold, color: C_NAVY })
+  w.page.drawText('For questions about this report, contact support@sevennova.ai', { x: MARGIN + 10, y: w.y - 19, size: 8, font: reg, color: C_MED })
+  w.page.drawText(`Report ID: ${report.request_id}  |  Generated: ${report.generated_at}`, { x: MARGIN + 10, y: w.y - 31, size: 7.5, font: mono, color: C_GRAY })
+  w.y -= 48
+
+  // ── FOOTER ON EVERY PAGE (runs after all pages including disclaimer) ────────
   const pages = doc.getPages()
   for (let i = 0; i < pages.length; i++) {
     const pg = pages[i]
     pg.drawLine({ start: { x: MARGIN, y: 38 }, end: { x: PAGE_W - MARGIN, y: 38 }, thickness: 0.4, color: C_LGRAY })
-    pg.drawText('SevenNova RiskCore  |  Verified Public-Record Evidence Pack  |  NOT A LICENSED APPRAISAL', {
+    pg.drawText('SevenNova.ai  |  LA Development Feasibility Report  |  PRELIMINARY ANALYSIS — NOT A LICENSED APPRAISAL OR LEGAL OPINION', {
       x: MARGIN, y: 26, size: 6.5, font: reg, color: C_GRAY,
     })
     pg.drawText(`Audit ID: ${report.request_id}  |  ${report.generated_at}  |  Page ${i + 1} of ${pages.length}`, {
       x: MARGIN, y: 16, size: 6.5, font: mono, color: C_GRAY,
     })
-  }
-
-  // Final disclaimer page
-  w.newPage()
-  w.heading('Disclaimer & Legal Notice')
-  w.gap(6)
-  const disclaimerParas = [
-    report.disclaimer,
-    'VERIFIED fields are sourced from live public-record government APIs at the time of generation. SevenNova does not guarantee the accuracy or completeness of third-party data sources.',
-    'AI ESTIMATE fields are generated by large language models and are not sourced from any primary data provider. These fields must be independently verified before any transaction.',
-    'This report does not constitute a licensed real estate appraisal, broker price opinion, legal opinion, credit decision, or investment recommendation.',
-    'ATTORNEY REVIEW REQUIRED: All legal determinations including zoning compliance, entitlement feasibility, and code violation liability require review by a licensed California real estate attorney.',
-    'MLS COMPS SUPPRESSED: No comparable sales data is included in this report. Valuation conclusions require a licensed MLS data feed and a licensed appraiser or broker.',
-  ]
-  for (const para of disclaimerParas) {
-    w.text(para, { size: 9 })
-    w.gap(8)
   }
 
   return doc.save()

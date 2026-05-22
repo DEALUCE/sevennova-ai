@@ -5,7 +5,7 @@
  * lowest risk. Every conclusion cites exact LAMC section or state statute.
  *
  * Sources encoded:
- *   LAMC 12.22 A.25     — TOC Affordable Housing Incentive Program
+ *   LAMC 12.22 A.31     — TOC Affordable Housing Incentive Program (Measure JJJ)
  *   Mayor ED1 (2022)    — Executive Directive 1 (100% affordable, ministerial)
  *   Gov. Code 65913.4   — SB 35 (2017, streamlined ministerial approval)
  *   AB 2011 (2022)      — Affordable Housing and High Road Jobs Act
@@ -79,6 +79,10 @@ export interface EntitlementAnalysis {
   units_by_right: number
   units_toc_bonus: number
   units_max_any_path: number
+
+  // Provenance
+  data_basis: string
+  human_review_required: boolean
 }
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
@@ -104,9 +108,9 @@ export interface EntitlementInput {
 
 const LAMC_TOC_CITATION: Citation = {
   source: 'LAMC',
-  section: '12.22 A.25',
-  url: 'https://codelibrary.amlegal.com/codes/los_angeles/latest/lamc/0-0-0-175046',
-  note: 'Affordable Housing Incentive Program (TOC)',
+  section: '12.22 A.31',
+  url: 'https://planning.lacity.gov/plans-policies/transit-oriented-communities-incentive-program',
+  note: 'Transit Oriented Communities (TOC) Affordable Housing Incentive Program — Measure JJJ (2016)',
 }
 
 const ED1_CITATION: Citation = {
@@ -561,5 +565,15 @@ export function analyzeEntitlement(input: EntitlementInput): EntitlementAnalysis
     units_by_right,
     units_toc_bonus,
     units_max_any_path: unitsMaxAnyPath,
+
+    data_basis: 'RULE_BASED — computed from zoning/statute logic and available parcel inputs; eligibility flags only, not final legal determination.',
+    human_review_required:
+      input.sb9_eligible === null ||
+      input.ab2011_eligible === null ||
+      input.in_liquefaction_zone === null ||
+      input.in_landslide_area === null ||
+      lot_size_sf <= 0 ||
+      !z ||
+      riskScore >= 7,
   }
 }
