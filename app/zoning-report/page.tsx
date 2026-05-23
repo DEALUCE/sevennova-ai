@@ -91,12 +91,27 @@ interface ProfitModelApi {
   equity_required: number;
 }
 
+interface MassingEnvelopeApi {
+  status: 'OK' | 'NEEDS_INPUT';
+  data_basis: 'RULE_BASED_ENVELOPE_ESTIMATE' | 'NEEDS_INPUT';
+  human_review_required: boolean;
+  floors_estimated: number | null;
+  floor_plate_sf_estimated: number | null;
+  gross_building_area_sf_estimated: number | null;
+  far_utilization_pct: number | null;
+  height_compliance: 'WITHIN_LIMIT' | 'EXCEEDS_LIMIT' | 'NEEDS_INPUT';
+  missing_inputs: string[];
+  warnings: string[];
+  note?: string;
+}
+
 interface ZoningResponse {
   address?: string;
   zone?: string;
   lot_size_sf?: number;
   entitlement_analysis?: EntitlementAnalysis;
   profit_model?: ProfitModelApi;
+  massing_envelope?: MassingEnvelopeApi;
   error?: string;
 }
 
@@ -932,6 +947,75 @@ function ZoningReportInner() {
 
               <DataBasisNote text={pm.data_basis} />
             </section>
+
+            {/* ── Section 2b: Preliminary Massing Envelope ── */}
+            {data.massing_envelope && (() => {
+              const me = data.massing_envelope!;
+              const gated = me.status === 'NEEDS_INPUT';
+              return (
+                <section style={{ background: S.bg2, border: `1px solid ${S.border}`, padding: '24px 28px' }}>
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ fontSize: '0.6rem', letterSpacing: '0.14em', color: S.textMuted, textTransform: 'uppercase', marginBottom: 4 }}>
+                      Preliminary Massing Envelope
+                    </p>
+                    <p style={{ fontSize: '0.72rem', color: S.textDim }}>
+                      Preliminary envelope estimate — not architectural design, not permit-ready.
+                    </p>
+                  </div>
+
+                  <ReviewBanner message="HUMAN REVIEW REQUIRED — Envelope figures are a deterministic estimate from zoning inputs only. Setbacks, overlays, design standards, parking, structural feasibility, and code-mandated variable setbacks require licensed architect and engineer review." />
+
+                  {gated ? (
+                    <div style={{ background: S.bg3, border: `1px solid ${S.borderDim}`, padding: '14px 18px' }}>
+                      <p style={{ fontSize: '0.78rem', color: S.textDim, marginBottom: 8, fontFamily: S.font }}>
+                        <strong style={{ color: '#f59e0b' }}>NEEDS INPUT</strong> — envelope cannot be calculated.
+                      </p>
+                      {me.missing_inputs.length > 0 && (
+                        <p style={{ fontSize: '0.68rem', color: S.textMuted, fontFamily: S.font, marginBottom: 4 }}>
+                          Missing: <span style={{ color: S.text }}>{me.missing_inputs.join(', ')}</span>
+                        </p>
+                      )}
+                      {me.note && (
+                        <p style={{ fontSize: '0.65rem', color: S.textMuted, fontFamily: S.font }}>{me.note}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 14 }}>
+                        {[
+                          ['STATUS', me.status],
+                          ['FLOORS', String(me.floors_estimated ?? '—')],
+                          ['FLOOR PLATE', me.floor_plate_sf_estimated != null ? `${fmt(me.floor_plate_sf_estimated)} sf` : '—'],
+                          ['GROSS BLDG AREA', me.gross_building_area_sf_estimated != null ? `${fmt(me.gross_building_area_sf_estimated)} sf` : '—'],
+                          ['FAR UTILIZATION', me.far_utilization_pct != null ? `${me.far_utilization_pct}%` : '—'],
+                          ['DATA BASIS', me.data_basis === 'RULE_BASED_ENVELOPE_ESTIMATE' ? 'RULE-BASED ESTIMATE' : me.data_basis],
+                        ].map(([label, val], i) => (
+                          <div key={i} style={{ background: S.bg3, border: `1px solid ${S.borderDim}`, padding: '11px 14px' }}>
+                            <p style={{ fontSize: '0.55rem', color: S.textMuted, letterSpacing: '0.1em', marginBottom: 4 }}>{label}</p>
+                            <p style={{ fontSize: '0.82rem', color: S.text, fontWeight: 700, fontFamily: S.font }}>{val}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {me.warnings && me.warnings.length > 0 && (
+                    <div style={{ borderTop: `1px solid ${S.borderDim}`, paddingTop: 12, marginTop: 14 }}>
+                      <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                        Warnings
+                      </p>
+                      {me.warnings.map((w, i) => (
+                        <p key={i} style={{ fontSize: '0.66rem', color: S.textDim, lineHeight: 1.55, marginBottom: 4 }}>
+                          › {w}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  <DataBasisNote text={`${me.data_basis} · human_review_required: ${me.human_review_required}`} />
+                </section>
+              );
+            })()}
 
             {/* ── Section 3: Download Report ── */}
             <section style={{ background: S.bg2, border: `1px solid ${S.border}`, padding: '28px 28px' }}>

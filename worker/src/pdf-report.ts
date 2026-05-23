@@ -988,6 +988,49 @@ export async function generatePDFReport(
     w.gap(8)
   }
 
+  // ── PRELIMINARY MASSING ENVELOPE ──────────────────────────────────────────
+  if (report.massing_envelope) {
+    const me = report.massing_envelope
+    const gated = me.status === 'NEEDS_INPUT'
+    w.heading('Preliminary Massing Envelope')
+    w.text('Preliminary envelope estimate — not architectural design, not permit-ready.', { size: 9, color: C_AMBER })
+    w.gap(4)
+    w.text(
+      'HUMAN REVIEW REQUIRED — Envelope figures are a deterministic estimate from zoning inputs only. ' +
+      'Setbacks, overlays, design standards, parking, structural feasibility, and code-mandated variable setbacks require licensed architect and engineer review.',
+      { size: 8.5, color: C_MED },
+    )
+    w.gap(6)
+
+    if (gated) {
+      w.subheading('NEEDS INPUT — envelope cannot be calculated')
+      if (me.missing_inputs && me.missing_inputs.length > 0) {
+        w.text(`Missing inputs: ${me.missing_inputs.join(', ')}`, { size: 9, color: C_DARK })
+      }
+      if (me.note) w.text(me.note, { size: 8.5, color: C_GRAY })
+      w.gap(4)
+    } else {
+      w.tableHeader(['METRIC', 'VALUE'], [2, 280])
+      w.simpleRow(['Status', String(me.status)], [2, 280])
+      w.simpleRow(['Data Basis', String(me.data_basis)], [2, 280])
+      w.simpleRow(['Floors Estimated', String(me.floors_estimated ?? '—')], [2, 280])
+      w.simpleRow(['Floor Plate', me.floor_plate_sf_estimated != null ? `${me.floor_plate_sf_estimated.toLocaleString()} sf` : '—'], [2, 280])
+      w.simpleRow(['Gross Building Area', me.gross_building_area_sf_estimated != null ? `${me.gross_building_area_sf_estimated.toLocaleString()} sf` : '—'], [2, 280])
+      w.simpleRow(['FAR Utilization', me.far_utilization_pct != null ? `${me.far_utilization_pct}%` : '—'], [2, 280])
+      w.gap(4)
+    }
+
+    if (me.warnings && me.warnings.length > 0) {
+      w.subheading('Warnings')
+      for (const wm of me.warnings) w.bullet(wm)
+      w.gap(4)
+    }
+
+    w.hline(C_LGRAY)
+    w.text(`DATA BASIS: ${me.data_basis} · human_review_required: ${me.human_review_required}`, { size: 7, color: C_GRAY })
+    w.gap(8)
+  }
+
   // ── EXECUTIVE SUMMARY ─────────────────────────────────────────────────────
   w.heading('Executive Summary')
   w.text(report.executive_summary || '[No summary generated]', { size: 9.5 })
