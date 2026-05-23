@@ -123,6 +123,7 @@ export async function onRequestPost(context) {
       next_steps: nextSteps,
       entitlement_analysis: entitlementAnalysis,
       profit_model: profitModel,
+      massing_envelope: calcMassingEnvelope(parcel, dev, zoneInfo, entitlementAnalysis),
       permits,
       violations,
       data_sources: [
@@ -1405,5 +1406,116 @@ function calcProfitModel(parcel, dev, toc, entitlement, userOverrides = {}) {
     development_note: base.irr_levered < 0
       ? `At estimated land value ($${Math.round(landPrice).toLocaleString()}), this parcel does not support conventional market-rate development at these unit counts. Max supportable land price is $${maxLandPrice.toLocaleString()} at ${targetIRR}% target IRR. For affordable development (ED1/LIHTC stack), run model with land_price override and adjusted rents.`
       : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5A/5B: Massing envelope — JS port of worker/src/massing.ts
+// Pure deterministic math. No AI. No architectural design or permit-readiness
+// claim. Fail-closed: NEEDS_INPUT when lot_size_sf, max_far, or height_limit_ft
+// is missing. Mirrors TS contract field-for-field for cross-engine parity.
+// ─────────────────────────────────────────────────────────────────────────────
+const MASSING_STANDARD_WARNINGS = [
+  'Preliminary envelope estimate — not architectural design and not permit-ready massing.',
+  'Setbacks, overlays, design standards, parking layout, code-mandated variable setbacks, residential mix requirements, sprinkler/egress code, and structural feasibility require licensed architect and engineer review.',
+];
+
+export function calcMassingEnvelope(parcel, dev, zoneInfo, entitlement) {
+  const floorToFloor = 10;
+  const sbFront = 0, sbRear = 0, sbSide = 0;   // setbacks not yet sourced in JS path
+  const setbacksApplied = { front_ft: sbFront, rear_ft: sbRear, side_ft: sbSide };
+
+  // Numeric FAR / height aren't currently parsed in the JS zoning path → NEEDS_INPUT.
+  const lotSf = (parcel && parcel.sqft_lot) ? Number(parcel.sqft_lot) : null;
+  const maxFar = null;
+  const heightLimit = null;
+  const lotW = (parcel && parcel.land_width) ? Number(parcel.land_width) : null;
+  const lotD = (parcel && parcel.land_depth) ? Number(parcel.land_depth) : null;
+  const unitsMax = entitlement && entitlement.units_max_any_path ? Number(entitlement.units_max_any_path) : null;
+
+  const inputsEcho = {
+    lot_size_sf: lotSf,
+    max_far: maxFar,
+    height_limit_ft: heightLimit,
+    floor_to_floor_height_ft: floorToFloor,
+    setbacks_applied: setbacksApplied,
+  };
+
+  const missing = [];
+  if (!lotSf || lotSf < 1) missing.push('lot_size_sf');
+  if (!maxFar || maxFar < 0.01) missing.push('max_far');
+  if (!heightLimit || heightLimit < 1) missing.push('height_limit_ft');
+
+  if (missing.length > 0) {
+    return {
+      data_basis: 'NEEDS_INPUT',
+      human_review_required: true,
+      status: 'NEEDS_INPUT',
+      floors_estimated: null,
+      floor_plate_sf_estimated: null,
+      gross_building_area_sf_estimated: null,
+      far_utilization_pct: null,
+      height_compliance: 'NEEDS_INPUT',
+      missing_inputs: missing,
+      warnings: MASSING_STANDARD_WARNINGS.slice(),
+      simple_geometry: null,
+      note: `Insufficient zoning inputs for envelope estimate. Missing: ${missing.join(', ')}.`,
+      zoning_code: (parcel && parcel.zoning) || null,
+      inputs_echo: inputsEcho,
+    };
+  }
+
+  // Below here lotSf, maxFar, heightLimit are present — kept as a guarded structural
+  // mirror of the TS path so a future numeric-FAR/height feed will compute correctly.
+  const warnings = MASSING_STANDARD_WARNINGS.slice();
+  let useW = lotW, useD = lotD;
+  if (!useW || !useD) {
+    const side = Math.sqrt(lotSf);
+    if (!useW) useW = side;
+    if (!useD) useD = side;
+    warnings.push('Lot dimensions not fully provided; square-lot approximation used for envelope geometry.');
+  }
+
+  const usableW = Math.max(0, useW - sbSide * 2);
+  const usableD = Math.max(0, useD - sbFront - sbRear);
+  const floorPlate = Math.round(usableW * usableD);
+  if (floorPlate === 0) warnings.push('Setbacks consume the full lot dimension on one or more axes; floor plate reduces to zero.');
+
+  const farGbaAllowed = Math.floor(lotSf * maxFar);
+  const maxFloorsByHeight = Math.floor(heightLimit / floorToFloor);
+  const floorsByFAR = floorPlate > 0 ? Math.ceil(farGbaAllowed / floorPlate) : 0;
+  const floors = floorPlate > 0 ? Math.min(maxFloorsByHeight, floorsByFAR) : 0;
+  let gba = floors * floorPlate;
+  if (gba > farGbaAllowed) gba = farGbaAllowed;
+  const farUtilizationPct = farGbaAllowed > 0 ? Math.round((gba / farGbaAllowed) * 1000) / 10 : 0;
+  const heightUsed = floors * floorToFloor;
+  const heightCompliance = heightUsed <= heightLimit ? 'WITHIN_LIMIT' : 'EXCEEDS_LIMIT';
+
+  if (unitsMax && unitsMax > 0 && floors > 0 && floorPlate > 0) {
+    const unitsPerFloor = Math.floor(floorPlate / 850);
+    const envelopeUnitCapacity = unitsPerFloor * floors;
+    if (envelopeUnitCapacity < unitsMax) {
+      warnings.push(`Envelope supports ~${envelopeUnitCapacity} units at 850 sf/unit baseline; entitlement permits up to ${unitsMax}. Smaller unit sizes, more floors (if zoning permits), or larger floor plate required to reach entitlement maximum.`);
+    }
+  }
+
+  return {
+    data_basis: 'RULE_BASED_ENVELOPE_ESTIMATE',
+    human_review_required: true,
+    status: 'OK',
+    floors_estimated: floors,
+    floor_plate_sf_estimated: floorPlate,
+    gross_building_area_sf_estimated: gba,
+    far_utilization_pct: farUtilizationPct,
+    height_compliance: heightCompliance,
+    missing_inputs: [],
+    warnings,
+    simple_geometry: {
+      lot: { width_ft: useW, depth_ft: useD },
+      building: { width_ft: usableW, depth_ft: usableD, height_ft: heightUsed, floors },
+      origin: { x: sbSide, y: sbFront, z: 0 },
+    },
+    zoning_code: (parcel && parcel.zoning) || null,
+    inputs_echo: inputsEcho,
   };
 }

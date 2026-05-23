@@ -1,6 +1,7 @@
 import { SKILL_PROMPTS, NARRATIVE_PROMPT } from './skill-prompts'
 import { analyzeEntitlement, type EntitlementAnalysis } from './entitlement'
 import { runProfitModel, type ProfitModel } from './profit-model'
+import { computeMassing, type MassingResult } from './massing'
 import { fetchZoning, type ZimasResult } from './zimas'
 import { sendEmail } from './agents/resend'
 import { storeAuditRecord } from './audit'
@@ -84,6 +85,7 @@ export interface PropertyReport {
   entitlement?: EntitlementResult
   entitlement_detailed?: EntitlementAnalysis
   profit_model_data?: ProfitModel
+  massing_envelope?: MassingResult
   executive_summary: string
   investment_thesis: string
   risk_summary: string
@@ -1343,6 +1345,22 @@ export async function generateReport(
     entitlement,
     entitlement_detailed: entitlementDetailed,
     profit_model_data: profitModelData,
+    massing_envelope: (() => {
+      try {
+        return computeMassing({
+          lot_size_sf: (parcelData.lot_size_sf as number | null) ?? null,
+          lot_dimensions: {
+            width_ft:  (parcelData.land_width_ft  as number | null) ?? undefined,
+            depth_ft:  (parcelData.land_depth_ft  as number | null) ?? undefined,
+          },
+          zoning_code:      String(parcelData.zimas_zone_code ?? '') || null,
+          max_far:          (parcelData.zimas_max_far          as number | null) ?? null,
+          height_limit_ft:  (parcelData.zimas_height_limit_ft  as number | null) ?? null,
+          units_max:        entitlementDetailed?.recommended_path?.max_units ?? null,
+          // setbacks: not available from current data sources — gate stays at default 0 with disclaimer
+        })
+      } catch { return undefined }
+    })(),
     executive_summary: String(narrative.executive_summary ?? ''),
     investment_thesis: String(narrative.investment_thesis ?? ''),
     risk_summary: String(narrative.risk_summary ?? ''),
