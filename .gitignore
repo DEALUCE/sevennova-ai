@@ -46,6 +46,7 @@ worker/live_*.json
 worker/live2_*.json
 worker/safety_*.json
 worker/final_*.json
+worker/predeploy_*.json
 worker/body.json
 
 # generated test PDFs (regenerated on demand)
