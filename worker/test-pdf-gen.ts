@@ -163,28 +163,29 @@ const mockProfitModel: ProfitModel & Record<string, unknown> = {
   debt_amount: 5861579,
   equity_required: 3156235,
   annual_debt_service: 442248,
-  // returns
+  // returns — GATED: land_price_provided=false in orchestrator → IRR/max-land suppressed
   irr_unlevered: 8.9,
-  irr_levered: 14.2,
+  irr_levered: null,
   equity_multiple: 1.68,
   cash_on_cash_yr1: 4.39,
   levered_profit: 2141040,
-  // max offer
+  // max offer (gated)
   target_irr: 20,
-  max_land_price_at_target_irr: 340000,
-  max_land_price_per_unit: 12142,
+  max_land_price_at_target_irr: null,
+  max_land_price_per_unit: null,
   max_land_pct_of_tdc: 5.2,
   // sensitivity
   sensitivity: mockSensitivity,
   // meta
   confidence: 'LOW',
   assumptions_note: 'Type V @ $275/sf (LA 2025/2026) | Rent $2,800/unit/mo (verify with broker) | 65% LTC @ 6.5% / 30yr | Exit 4.5% cap after 5-year hold',
-  deal_signal: 'BORDERLINE',
-  deal_signal_reason: 'Levered IRR 14.2% below 20% target. Land ($700,000) exceeds max ($340,000) by 106%. Negotiate land price or use affordable pathway (ED1/LIHTC stack).',
+  deal_signal: 'NEEDS_INPUT',
+  deal_signal_reason: 'User-provided land price required before IRR, deal signal, or max land price can be calculated.',
+  warning: 'User-provided land price required before IRR, deal signal, or max land price can be calculated.',
   // new provenance fields
   data_basis: 'MODEL_ESTIMATE — based on default assumptions; not verified bids, appraisal, lender quote, or final underwriting.',
   human_review_required: true,
-  development_note: 'At estimated land value ($700,000), market-rate development does not meet target IRR. Max supportable land price is $340,000 at 20% target IRR. For affordable development (ED1/LIHTC stack), run model with adjusted rents and subsidy assumptions.',
+  development_note: null,   // gated — narrative requires user-provided land price
 }
 
 // ─── Source registry mock ─────────────────────────────────────────────────────
@@ -287,32 +288,29 @@ function buildReport(
       human_review_required: humanReview,
     } as Parameters<typeof generatePDFReport>[0]['profit_model_data'],
     executive_summary:
-      `9432 Oakmore Rd is a 6,750 sf RD1.5-1XL zoned lot in Beverlywood, TOC Tier 3. ` +
-      `The site is eligible for ED1 streamlined ministerial approval (100% affordable) allowing up to 28 units with a 2–6 month timeline, ` +
-      `and TOC by-right development allowing up to 18 units. Market-rate pro forma at current asking price ($700K land) yields a levered IRR of 14.2%, ` +
-      `below the 20% target. The max supportable land price for a market-rate development is $340,000. ` +
-      `For affordable development via ED1 + LIHTC/HOME stack, the deal can pencil at a significantly higher land basis. ` +
-      `No active LADBS violations. Moderate seismic and wildfire exposure. RECOMMENDED: pursue ED1 pathway with LIHTC advisor.`,
+      `Parcel is in Beverlywood, TOC Tier 3. The site is eligible for ED1 streamlined ministerial approval (100% affordable) ` +
+      `with a 2–6 month timeline, and TOC by-right development as an alternative. Pro forma economics (IRR, deal signal, ` +
+      `max supportable land price) are gated pending user-provided land price, rent, and cost assumptions. ` +
+      `No active LADBS violations. Moderate seismic and wildfire exposure. RECOMMENDED next step: pursue ED1 pathway with LIHTC advisor.`,
     investment_thesis:
-      `Beverlywood infill site with strong entitlement optionality. ` +
-      `ED1 ministerial pathway removes discretionary risk entirely — no Planning Commission hearing, 2–6 month approval timeline. ` +
-      `Stackable with LIHTC + HOME + AHSC for approximately $145K/unit in subsidies, materially improving returns at current land basis. ` +
-      `TOC Tier 3 by-right alternative available for mixed-income strategy.`,
+      `Beverlywood infill site with strong entitlement optionality. ED1 ministerial pathway removes discretionary risk entirely — ` +
+      `no Planning Commission hearing, 2–6 month approval timeline. TOC Tier 3 by-right alternative available for mixed-income strategy. ` +
+      `Returns and max land basis require user-provided assumptions.`,
     risk_summary:
-      `Primary risk: land price exceeds max supportable basis for market-rate development by 106%. ` +
-      `Seismic exposure (Ss=1.82) increases hard cost contingency. Wildfire insurance stress moderate but manageable. ` +
-      `ED1 pathway requires 100% affordable — limits market-rate upside. No MLS comparable data included.`,
+      `Seismic exposure increases hard cost contingency. Wildfire insurance stress moderate but manageable. ` +
+      `ED1 pathway requires 100% affordable — limits market-rate upside. No MLS comparable data included. ` +
+      `IRR/land-basis claims suppressed pending verified user inputs.`,
     strategic_recommendations: [
-      'Negotiate land price to $340,000 or below for market-rate viability at 20% IRR target',
-      'Engage LIHTC syndicator immediately — ED1 + LIHTC + AHSC stack can support $700K land basis',
+      'Engage LIHTC syndicator early to evaluate ED1 + LIHTC + AHSC stack',
       'Order Phase I ESA — seismic zone mandates soils report before permit',
       'Confirm TOC Tier 3 status with LADCP Planning — verify buffer radius from nearest qualifying transit stop',
       'Engage licensed land use attorney for ED1 application — ministerial but requires specific compliance package',
+      'Provide verified land price, rent, and cost inputs to unlock IRR, deal signal, and max land price',
     ],
     red_flags: [
-      'CRITICAL: Land price ($700,000) exceeds max supportable basis ($340,000) for market-rate development at 20% IRR target',
-      'SEISMIC: High seismic zone (Ss=1.82) — soils report and structural engineering required',
-      'MODEL ESTIMATE: Pro forma uses default assumptions — replace with actual bids before commitment',
+      'NEEDS_INPUT: Pro forma IRR, deal signal, and max land price require user-provided land price and assumptions',
+      'SEISMIC: High seismic zone — soils report and structural engineering required',
+      'MODEL ESTIMATE: Pro forma uses default assumptions — replace with actual bids before any commitment',
     ],
     skills_activated: [
       { skill_name: 'LA Developer Intelligence',   activated: true,  confidence: 90, data_freshness: 'LIVE' },

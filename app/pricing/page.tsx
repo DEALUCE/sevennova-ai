@@ -38,8 +38,8 @@ const REPORTS = [
     features: [
       'Everything in Starter',
       'All entitlement pathways + LAMC citations',
-      'Developer pro forma (IRR · NOI · TDC)',
-      'Max land price @ 20% target IRR',
+      'Developer pro forma (IRR · NOI · TDC) — requires user-provided land price, rent, and cost assumptions',
+      'Max land price @ 20% target IRR — requires user-provided assumptions',
       '5-scenario sensitivity analysis',
       'Stackable incentives (TOC + LIHTC + HOME)',
       'Distress signals + DSCR estimate',

@@ -924,15 +924,20 @@ export async function generatePDFReport(
     w.text(pm.deal_signal_reason ?? '', { size: 8.5, color: signalColor })
     w.gap(6)
 
-    // Cost stack
+    // Cost stack — land + TDC are land-price-dependent; gate them when finance gate active
+    const costGated = pm.irr_levered === null || pm.irr_levered === undefined
+    const landValStr = costGated ? 'NEEDS INPUT — user-provided land price required' : `$${pm.land_price.toLocaleString()}`
+    const tdcValStr  = costGated
+      ? 'NEEDS INPUT — requires user-provided land price'
+      : `$${pm.total_development_cost.toLocaleString()} ($${pm.cost_per_unit.toLocaleString()}/unit)`
     w.subheading('Construction Cost Stack')
     const costRows = [
-      ['Land Price (est.)', `$${pm.land_price.toLocaleString()}`],
+      ['Land Price', landValStr],
       ['Hard Costs', `$${pm.hard_costs_total.toLocaleString()} ($${pm.hard_costs_per_sf}/sf, ${pm.construction_type})`],
       ['Soft Costs (20%)', `$${pm.soft_costs_total.toLocaleString()}`],
       ['Permit Fees', `$${pm.permit_fees.toLocaleString()}`],
       ['Developer Fee + Contingency', `$${(pm.developer_fee + pm.contingency).toLocaleString()}`],
-      ['TOTAL DEVELOPMENT COST', `$${pm.total_development_cost.toLocaleString()} ($${pm.cost_per_unit.toLocaleString()}/unit)`],
+      ['TOTAL DEVELOPMENT COST', tdcValStr],
     ]
     w.tableHeader(['LINE ITEM', 'AMOUNT'], [2, 280])
     for (const [label, val] of costRows) w.simpleRow([label, val], [2, 280])
@@ -964,18 +969,23 @@ export async function generatePDFReport(
     }
     w.gap(4)
 
-    // Sensitivity
+    // Sensitivity — gated: IRR scenarios are land-price-dependent, so suppress when land not user-provided
+    const sensitivityGated = pm.irr_levered === null || pm.irr_levered === undefined
     if (pm.sensitivity?.rows?.length) {
       w.subheading('Sensitivity Analysis')
-      w.tableHeader(['SCENARIO', 'RENT ±%', 'COST ±%', 'IRR LEVERED', 'EQUITY MULTIPLE'], [2, 130, 210, 300, 390])
-      for (const row of pm.sensitivity.rows) {
-        w.simpleRow([
-          row.label,
-          `${row.rent_change_pct > 0 ? '+' : ''}${row.rent_change_pct}%`,
-          `${row.construction_change_pct > 0 ? '+' : ''}${row.construction_change_pct}%`,
-          `${row.irr_levered}%`,
-          `${row.equity_multiple}x`,
-        ], [2, 130, 210, 300, 390])
+      if (sensitivityGated) {
+        w.text('NEEDS INPUT — sensitivity scenarios require user-provided land price.', { size: 9, color: C_GRAY })
+      } else {
+        w.tableHeader(['SCENARIO', 'RENT ±%', 'COST ±%', 'IRR LEVERED', 'EQUITY MULTIPLE'], [2, 130, 210, 300, 390])
+        for (const row of pm.sensitivity.rows) {
+          w.simpleRow([
+            row.label,
+            `${row.rent_change_pct > 0 ? '+' : ''}${row.rent_change_pct}%`,
+            `${row.construction_change_pct > 0 ? '+' : ''}${row.construction_change_pct}%`,
+            `${row.irr_levered}%`,
+            `${row.equity_multiple}x`,
+          ], [2, 130, 210, 300, 390])
+        }
       }
     }
     w.gap(4)

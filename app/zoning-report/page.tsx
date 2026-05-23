@@ -481,8 +481,8 @@ const REPORT_TIERS = [
     features: [
       'Everything in Starter',
       'All entitlement pathways with LAMC citations',
-      'Developer pro forma (IRR · NOI · TDC)',
-      'Max land price @ 20% target IRR',
+      'Developer pro forma (IRR · NOI · TDC) — requires user-provided land price, rent, and cost assumptions',
+      'Max land price @ 20% target IRR — requires user-provided assumptions',
       '5-scenario sensitivity analysis',
       'Stackable incentives (TOC + LIHTC + HOME)',
       'Distress signals + DSCR estimate',
@@ -515,6 +515,9 @@ function ZoningReportInner() {
   const [apiError, setApiError]             = useState('');
   const [selectedId, setSelectedId]         = useState<string | null>(null);
   const [computed,   setComputed]           = useState<ProFormaResult | null>(null);
+  // Finance gate (UI parity with backend) — IRR/deal-signal/max-land remain suppressed
+  // until the user EXPLICITLY enters a land price. Default/seeded values do not count.
+  const [landPriceTouched, setLandPriceTouched] = useState(false);
 
   const [inputs, setInputs] = useState<ProFormaInputs>({
     landPrice: 500_000, units: 10, avgUnitSf: 850,
@@ -559,6 +562,7 @@ function ZoningReportInner() {
     setStatus('loading');
     setApiError('');
     setData(null);
+    setLandPriceTouched(false);   // new address — re-gate finance outputs until user enters land price
     try {
       const res  = await fetch('/api/zoning', {
         method: 'POST',
@@ -612,7 +616,7 @@ function ZoningReportInner() {
             ZONING <span style={{ color: S.accent }}>REPORT</span>
           </h1>
           <p style={{ fontSize: '0.72rem', color: S.textMuted, margin: 0 }}>
-            Entitlement pathways · Developer pro forma · Live IRR calculator — Los Angeles only
+            Entitlement pathways · Preliminary pro forma — requires user inputs · Los Angeles only
           </p>
         </div>
 
@@ -775,7 +779,7 @@ function ZoningReportInner() {
                   Developer Pro Forma Builder
                 </p>
                 <p style={{ fontSize: '0.72rem', color: S.textDim }}>
-                  Edit any input — IRR, deal signal, and max land price update instantly
+                  Preliminary pro forma — IRR, deal signal, and max land price are suppressed until you enter your offer land price.
                 </p>
               </div>
 
@@ -791,7 +795,7 @@ function ZoningReportInner() {
                     Inputs
                   </p>
 
-                  <NumInput label="Land Price" value={inputs.landPrice} onChange={v => setInputs(p => ({ ...p, landPrice: v }))} prefix="$" step={25000} />
+                  <NumInput label="Land Price (your offer)" value={inputs.landPrice} onChange={v => { setInputs(p => ({ ...p, landPrice: v })); setLandPriceTouched(true); }} prefix="$" step={25000} />
                   <NumInput label="Units" value={inputs.units} onChange={v => setInputs(p => ({ ...p, units: Math.max(1, v) }))} suffix="units" step={1} min={1} />
                   <NumInput label="Avg Unit Size" value={inputs.avgUnitSf} onChange={v => setInputs(p => ({ ...p, avgUnitSf: Math.max(200, v) }))} suffix="sf" step={50} min={200} />
                   <NumInput label="Rent / Unit / Month" value={inputs.rentPerUnit} onChange={v => setInputs(p => ({ ...p, rentPerUnit: v }))} prefix="$" step={50} min={500} />
@@ -835,91 +839,145 @@ function ZoningReportInner() {
                 {computed && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <p style={{ fontSize: '0.6rem', color: S.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
-                      Results (live)
+                      Results {landPriceTouched ? '(live)' : '(gated — awaiting user inputs)'}
                     </p>
 
-                    {/* Hero: deal signal + IRR + equity multiple */}
+                    {/* Hero: deal signal + IRR + equity multiple — GATED until user enters land price */}
                     <div style={{
-                      background: S.bg3, border: `1px solid ${S.borderDim}`,
+                      background: S.bg3, border: `1px solid ${landPriceTouched ? S.borderDim : 'rgba(245,158,11,0.35)'}`,
                       padding: '18px 20px', display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center',
                     }}>
                       <div>
                         <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 6 }}>DEAL SIGNAL</p>
-                        <DealBadge signal={computed.dealSignal} />
+                        {landPriceTouched ? <DealBadge signal={computed.dealSignal} /> : (
+                          <span style={{
+                            display: 'inline-block', padding: '4px 14px',
+                            fontSize: '0.72rem', fontFamily: S.font, fontWeight: 700, letterSpacing: '0.12em',
+                            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b',
+                          }}>NEEDS_INPUT</span>
+                        )}
                       </div>
                       <div>
                         <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 4 }}>LEVERED IRR</p>
-                        <p style={{
-                          fontSize: '1.65rem', fontWeight: 700, lineHeight: 1,
-                          color: computed.irrLevered >= 20 ? '#22c55e'
-                            : computed.irrLevered >= 12 ? '#f59e0b'
-                            : '#ef4444',
-                        }}>
-                          {irrLabel(computed.irrLevered)}
-                        </p>
+                        {landPriceTouched ? (
+                          <p style={{
+                            fontSize: '1.65rem', fontWeight: 700, lineHeight: 1,
+                            color: computed.irrLevered >= 20 ? '#22c55e'
+                              : computed.irrLevered >= 12 ? '#f59e0b'
+                              : '#ef4444',
+                          }}>
+                            {irrLabel(computed.irrLevered)}
+                          </p>
+                        ) : (
+                          <p style={{ fontSize: '0.85rem', color: S.textMuted, fontStyle: 'italic' }}>—</p>
+                        )}
                       </div>
                       <div>
                         <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 4 }}>EQUITY MULTIPLE</p>
-                        <p style={{ fontSize: '1.1rem', fontWeight: 700, color: S.text }}>
-                          {computed.equityMultiple === 0 ? '—' : `${computed.equityMultiple}×`}
-                        </p>
+                        {landPriceTouched ? (
+                          <p style={{ fontSize: '1.1rem', fontWeight: 700, color: S.text }}>
+                            {computed.equityMultiple === 0 ? '—' : `${computed.equityMultiple}×`}
+                          </p>
+                        ) : (
+                          <p style={{ fontSize: '0.85rem', color: S.textMuted, fontStyle: 'italic' }}>—</p>
+                        )}
                       </div>
                     </div>
 
-                    {/* Max land price highlight */}
-                    <div style={{
-                      background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.2)',
-                      padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    }}>
-                      <div>
-                        <p style={{ fontSize: '0.58rem', color: '#22c55e', letterSpacing: '0.08em', marginBottom: 4, opacity: 0.85 }}>
+                    {/* Finance gate warning (only when land not user-provided) */}
+                    {!landPriceTouched && (
+                      <div style={{
+                        background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
+                        padding: '11px 16px', display: 'flex', gap: 10, alignItems: 'flex-start',
+                      }}>
+                        <span style={{ color: '#f59e0b', flexShrink: 0 }}>⚠</span>
+                        <p style={{ color: '#f59e0b', fontSize: '0.71rem', lineHeight: 1.6, margin: 0, fontFamily: S.font }}>
+                          Enter verified land price, rent, and cost assumptions to calculate IRR, deal signal, and max land price.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Max land price — GATED until user enters land price */}
+                    {landPriceTouched ? (
+                      <div style={{
+                        background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.2)',
+                        padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      }}>
+                        <div>
+                          <p style={{ fontSize: '0.58rem', color: '#22c55e', letterSpacing: '0.08em', marginBottom: 4, opacity: 0.85 }}>
+                            MAX LAND PRICE @ 20% IRR
+                          </p>
+                          <p style={{ fontSize: '1.3rem', fontWeight: 700, color: '#22c55e' }}>
+                            {fmtM(computed.maxLandPrice)}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 4 }}>PER UNIT</p>
+                          <p style={{ fontSize: '0.9rem', color: S.textDim }}>
+                            {inputs.units > 0 ? fmtM(Math.round(computed.maxLandPrice / inputs.units)) : '—'}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        background: S.bg3, border: `1px dashed ${S.borderDim}`,
+                        padding: '14px 18px',
+                      }}>
+                        <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 4 }}>
                           MAX LAND PRICE @ 20% IRR
                         </p>
-                        <p style={{ fontSize: '1.3rem', fontWeight: 700, color: '#22c55e' }}>
-                          {fmtM(computed.maxLandPrice)}
+                        <p style={{ fontSize: '0.85rem', color: S.textMuted, fontStyle: 'italic' }}>
+                          Requires user-provided land price
                         </p>
                       </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.08em', marginBottom: 4 }}>PER UNIT</p>
-                        <p style={{ fontSize: '0.9rem', color: S.textDim }}>
-                          {inputs.units > 0 ? fmtM(Math.round(computed.maxLandPrice / inputs.units)) : '—'}
-                        </p>
-                      </div>
-                    </div>
+                    )}
 
                     {/* Cost stack */}
                     <div style={{ background: S.bg3, border: `1px solid ${S.borderDim}`, padding: '14px 18px' }}>
                       <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Cost Stack</p>
                       {[
-                        ['Land',              fmtM(inputs.landPrice),    false],
-                        ['Hard Costs',        fmtM(computed.hardCosts),  false],
-                        ['Soft Costs (20%)',  fmtM(computed.softCosts),  false],
-                        ['Total Dev Cost',    fmtM(computed.tdc),        true],
-                        ['Cost / Unit',       fmtM(computed.costPerUnit),false],
-                      ].map(([lbl, val, bold], i) => (
-                        <div key={i} style={{
-                          display: 'flex', justifyContent: 'space-between', marginBottom: 5,
-                          ...(i === 2 ? { borderBottom: `1px solid ${S.borderDim}`, paddingBottom: 6 } : {}),
-                        }}>
-                          <span style={{ fontSize: '0.72rem', color: S.textDim }}>{lbl as string}</span>
-                          <span style={{ fontSize: '0.72rem', color: bold ? S.text : S.textDim, fontWeight: bold ? 700 : 400 }}>{val as string}</span>
-                        </div>
-                      ))}
+                        // [label, value, bold, requiresLandPrice]
+                        ['Land',              fmtM(inputs.landPrice),    false, true],
+                        ['Hard Costs',        fmtM(computed.hardCosts),  false, false],
+                        ['Soft Costs (20%)',  fmtM(computed.softCosts),  false, false],
+                        ['Total Dev Cost',    fmtM(computed.tdc),        true,  true],
+                        ['Cost / Unit',       fmtM(computed.costPerUnit),false, true],
+                      ].map(([lbl, val, bold, gated], i) => {
+                        const suppress = gated && !landPriceTouched;
+                        return (
+                          <div key={i} style={{
+                            display: 'flex', justifyContent: 'space-between', marginBottom: 5,
+                            ...(i === 2 ? { borderBottom: `1px solid ${S.borderDim}`, paddingBottom: 6 } : {}),
+                          }}>
+                            <span style={{ fontSize: '0.72rem', color: S.textDim }}>{lbl as string}</span>
+                            <span style={{
+                              fontSize: '0.72rem',
+                              color: suppress ? S.textMuted : (bold ? S.text : S.textDim),
+                              fontWeight: (bold && !suppress) ? 700 : 400,
+                              fontStyle: suppress ? 'italic' : 'normal',
+                            }}>
+                              {suppress ? 'requires user land price' : (val as string)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
 
-                    {/* Returns */}
+                    {/* Returns — Unlevered IRR / Equity Required / Annual Debt depend on land price → gated */}
                     <div style={{ background: S.bg3, border: `1px solid ${S.borderDim}`, padding: '14px 18px' }}>
                       <p style={{ fontSize: '0.58rem', color: S.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Returns</p>
                       {[
-                        ['NOI (annual)',     fmtM(computed.noi)],
-                        ['Exit Value',       fmtM(computed.exitValue)],
-                        ['Equity Required',  fmtM(computed.equity)],
-                        ['Annual Debt Svc',  fmtM(computed.annualDebt)],
-                        ['Unlevered IRR',    irrLabel(computed.irrUnlevered)],
-                      ].map(([lbl, val], i) => (
+                        ['NOI (annual)',     fmtM(computed.noi),       false],   // independent of land price
+                        ['Exit Value',       fmtM(computed.exitValue), false],   // independent of land price
+                        ['Equity Required',  fmtM(computed.equity),    true],
+                        ['Annual Debt Svc',  fmtM(computed.annualDebt),true],
+                        ['Unlevered IRR',    irrLabel(computed.irrUnlevered), true],
+                      ].map(([lbl, val, gated], i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                          <span style={{ fontSize: '0.72rem', color: S.textDim }}>{lbl}</span>
-                          <span style={{ fontSize: '0.72rem', color: S.text }}>{val}</span>
+                          <span style={{ fontSize: '0.72rem', color: S.textDim }}>{lbl as string}</span>
+                          <span style={{ fontSize: '0.72rem', color: S.text, fontStyle: (gated && !landPriceTouched) ? 'italic' : 'normal' }}>
+                            {(gated && !landPriceTouched) ? 'requires user land price' : (val as string)}
+                          </span>
                         </div>
                       ))}
                     </div>
