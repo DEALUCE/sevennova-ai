@@ -18,7 +18,7 @@ const RENTLAELITE_ROUTES = new Set([
   '/results',
   '/services',
   '/short-term-luxury-rental-west-los-angeles',
-  '/zoning-report',
+  // /zoning-report is owned by the SevenNova Next.js app — do not proxy to rentlaelite.
 ]);
 
 const RENTLAELITE_BASE = 'https://master.rentlaelite-v2.pages.dev';
