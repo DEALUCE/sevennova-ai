@@ -21,20 +21,29 @@ export async function onRequestPost(context) {
     const ain    = await assessorSearch(address, geo.lat, geo.lng);
     const parcel = ain ? await assessorDetail(ain) : {};
 
-    const lat = parcel.lat || geo.lat;
-    const lng = parcel.lng || geo.lng;
+    // Address-coords (from geocoder) vs parcel-coords (from Assessor) — when these
+    // diverge significantly, the Assessor returned the wrong APN. We always query
+    // ZIMAS at the GEOCODED address coords (authoritative for "where the user asked"),
+    // not the Assessor's parcel coords (which can be a different parcel entirely).
+    const addrLat = geo.lat;
+    const addrLng = geo.lng;
+    const parcelLat = parcel.lat || geo.lat;
+    const parcelLng = parcel.lng || geo.lng;
+    const lat = addrLat;
+    const lng = addrLng;
 
-    // 3. TOC tier
+    // 3. TOC tier (use geocoded address coords)
     const toc = calcTOC(lat, lng);
 
-    // 4. Zoning — LA City ZIMAS is authoritative; County Assessor `zoning_pdb` is only a sanity-check
-    //    against parcel-identity drift (Assessor search returning the wrong APN).
+    // 4. Zoning — LA City ZIMAS is authoritative, queried at the GEOCODED address
+    //    (not Assessor parcel coords) so a bad APN match can't sabotage zoning lookup.
     const zimas = await fetchZimas(lat, lng);   // null if outside LA City or service fails
 
     // Parcel identity reconciliation. If Assessor's zoning code is empty OR clearly
-    // inconsistent with the LA City ZIMAS zone at the geocoded point, treat the
-    // Assessor parcel as a possible mismatch and gate downstream finance/units.
-    const parcelIdentity = reconcileParcelIdentity(parcel, zimas);
+    // inconsistent with the LA City ZIMAS zone at the geocoded point, OR if the
+    // Assessor parcel's own coords sit far from the geocoded address, treat the
+    // Assessor parcel as a probable mismatch and gate downstream outputs.
+    const parcelIdentity = reconcileParcelIdentity(parcel, zimas, addrLat, addrLng, parcelLat, parcelLng);
 
     // ZIMAS is primary source. Fall back to Assessor `zoning_pdb` ONLY when ZIMAS is
     // unavailable. If neither resolves to an LA City pattern, downstream functions
@@ -46,8 +55,10 @@ export async function onRequestPost(context) {
     const zip     = parcel.zip || geo.zip || '';
     const oppZone = LA_OZ_ZIPS.has(zip.split('-')[0]);
 
-    // 6. Development potential — uses ZIMAS-derived zone for correct LAMC density
-    const dev = calcDevelopment(parcel, toc, zoneInfo, zimas);
+    // 6. Development potential — uses ZIMAS-derived zone for correct LAMC density.
+    //    Gated by parcel identity: if Assessor returned the wrong APN, the lot
+    //    size we have is the WRONG parcel's lot, so the math must not run.
+    const dev = calcDevelopment(parcel, toc, zoneInfo, zimas, parcelIdentity);
 
     // 7. SB9 + ADU
     const sb9 = calcSB9(parcel, zoneInfo, lat, lng);
@@ -669,7 +680,28 @@ async function fetchZimas(lat, lng) {
 // geocoded point. If the Assessor's `zoning_pdb` doesn't broadly correspond to
 // the LA City zone class — or is absent — flag the parcel record as a probable
 // identity mismatch (Assessor lookup likely returned the wrong APN).
-export function reconcileParcelIdentity(parcel, zimas) {
+export function reconcileParcelIdentity(parcel, zimas, addrLat, addrLng, parcelLat, parcelLng) {
+  // Coord-drift check: distance (deg) between geocoded address and Assessor parcel.
+  // 0.001° ≈ 110 m. If Assessor parcel sits >300 m from the geocoded address, the
+  // Assessor lookup almost certainly returned the wrong APN.
+  let coordDrift = null
+  if (typeof addrLat === 'number' && typeof parcelLat === 'number' &&
+      typeof addrLng === 'number' && typeof parcelLng === 'number' &&
+      addrLat && parcelLat && addrLng && parcelLng) {
+    const dLat = Math.abs(addrLat - parcelLat)
+    const dLng = Math.abs(addrLng - parcelLng)
+    coordDrift = Math.sqrt(dLat * dLat + dLng * dLng)
+  }
+  if (coordDrift !== null && coordDrift > 0.003) {
+    return {
+      status: 'NEEDS_REVIEW',
+      apn: parcel.apn || null,
+      reason: `Parcel identity requires review — LA County Assessor parcel (APN ${parcel.apn || '?'}) is ~${Math.round(coordDrift * 111_000)} m from the geocoded address; the Assessor lookup may have returned the wrong APN.`,
+      coord_drift_deg: coordDrift,
+      assessor_zone: parcel.zoning_pdb || null,
+      zimas_zone: zimas ? zimas.zone_code : null,
+    }
+  }
   if (!zimas || !zimas.zone_class) {
     return {
       status: 'NEEDS_INPUT',
@@ -728,9 +760,22 @@ const LA_OZ_ZIPS = new Set([
 
 // ── Development potential ─────────────────────────────────────────────────────
 
-export function calcDevelopment(parcel, toc, zoneInfo, zimas) {
+export function calcDevelopment(parcel, toc, zoneInfo, zimas, parcelIdentity) {
   const lot = parcel.sqft_lot || 0;
 
+  // Parcel identity gate — if the Assessor returned the wrong APN, every
+  // parcel field (incl. lot size, value) belongs to a different parcel and
+  // cannot be used. Fail closed.
+  if (parcelIdentity && parcelIdentity.status === 'NEEDS_REVIEW') {
+    return {
+      note: parcelIdentity.reason || 'Parcel identity requires review.',
+      needs_input: true,
+      base_units_by_right: null,
+      toc_units: null,
+      max_potential_units: null,
+      parcel_identity_status: 'NEEDS_REVIEW',
+    };
+  }
   if (!lot) {
     return {
       note: 'Lot size unavailable',
