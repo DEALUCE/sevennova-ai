@@ -16,93 +16,127 @@ interface SourceResult {
   detail: string
 }
 
-async function checkLADBS(): Promise<SourceResult> {
-  try {
-    const res = await fetch(
-      'https://data.lacity.org/resource/hbkd-qubn.json?street_name=JEFFERSON&address_start=3612&$limit=1',
-      { headers: { Accept: 'application/json' } },
-    )
-    const data = await res.json() as unknown[]
-    return { name: 'LADBS', ok: res.ok && Array.isArray(data), detail: `${Array.isArray(data) ? data.length : 0} records` }
-  } catch (e) {
-    return { name: 'LADBS', ok: false, detail: String(e) }
+interface FetchJsonOk<T>  { ok: true;  status: number; data: T;       detail: string }
+interface FetchJsonErr    { ok: false; status: number; data: null;    detail: string }
+type FetchJsonResult<T> = FetchJsonOk<T> | FetchJsonErr
+
+// ── Safe JSON fetch with retry ───────────────────────────────────────────────
+// Hardens every health-check call against three failure modes that were causing
+// false-positive alerts:
+//   (a) transient upstream 5xx (Cloudflare 525/530 between Workers and origins)
+//   (b) HTML error pages parsed by `res.json()` → SyntaxError that bubbles up
+//   (c) network drops / DNS failures returning no response
+//
+// Retries: 1 (so up to 2 attempts total). Backoff: 750ms. Timeout per attempt: 8s.
+export async function fetchJsonSafe<T = unknown>(
+  url: string,
+  init: RequestInit = {},
+  retries = 1,
+  backoffMs = 750,
+  timeoutMs = 8_000,
+): Promise<FetchJsonResult<T>> {
+  let lastStatus = 0
+  let lastDetail = ''
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+      lastStatus = res.status
+      const text = await res.text()
+      // Try to parse as JSON; if it's HTML/garbage, treat as failure with body preview.
+      let parsed: T | null = null
+      let parseError: string | null = null
+      try {
+        parsed = text ? (JSON.parse(text) as T) : null
+      } catch (e) {
+        parseError = String(e)
+      }
+      if (res.ok && parsed !== null && parseError === null) {
+        return { ok: true, status: res.status, data: parsed, detail: 'ok' }
+      }
+      // Non-2xx OR non-JSON body: record + retry if attempts remain.
+      const bodyPreview = text.replace(/\s+/g, ' ').slice(0, 160)
+      lastDetail = parseError
+        ? `status ${res.status} non-JSON: ${bodyPreview}`
+        : `status ${res.status} body: ${bodyPreview}`
+      // Retry only on transient upstream errors: explicit 5xx + 408/429.
+      // 4xx (incl. 404) is treated as permanent — no retry, even if body is non-JSON.
+      const retryable = res.status >= 500 || res.status === 408 || res.status === 429
+      if (!retryable) break
+    } catch (e) {
+      lastStatus = 0
+      lastDetail = `fetch error: ${String(e)}`
+    }
+    if (attempt < retries) await new Promise(r => setTimeout(r, backoffMs))
   }
+  return { ok: false, status: lastStatus, data: null, detail: lastDetail || 'unknown failure' }
+}
+
+async function checkLADBS(): Promise<SourceResult> {
+  const r = await fetchJsonSafe<unknown[]>(
+    'https://data.lacity.org/resource/hbkd-qubn.json?street_name=JEFFERSON&address_start=3612&$limit=1',
+    { headers: { Accept: 'application/json' } },
+  )
+  if (!r.ok) return { name: 'LADBS', ok: false, detail: r.detail }
+  return { name: 'LADBS', ok: Array.isArray(r.data), detail: `${Array.isArray(r.data) ? r.data.length : 0} records` }
 }
 
 async function checkFEMA(): Promise<SourceResult> {
-  try {
-    const res = await fetch(
-      `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE&f=json`,
-    )
-    const data = await res.json() as { features?: unknown[] }
-    const ok = res.ok && data.features !== undefined
-    return { name: 'FEMA', ok, detail: ok ? `zone: ${(data.features?.[0] as Record<string, Record<string, string>>)?.attributes?.FLD_ZONE ?? 'X'}` : 'no response' }
-  } catch (e) {
-    return { name: 'FEMA', ok: false, detail: String(e) }
-  }
+  const r = await fetchJsonSafe<{ features?: Array<{ attributes?: { FLD_ZONE?: string } }> }>(
+    `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE&f=json`,
+  )
+  if (!r.ok) return { name: 'FEMA', ok: false, detail: r.detail }
+  if (r.data.features === undefined) return { name: 'FEMA', ok: false, detail: 'malformed response (no features field)' }
+  return { name: 'FEMA', ok: true, detail: `zone: ${r.data.features?.[0]?.attributes?.FLD_ZONE ?? 'X'}` }
 }
 
 async function checkCalFire(): Promise<SourceResult> {
-  try {
-    const res = await fetch(
-      `https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSZSRA_23_3/FeatureServer/0/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FHSZ,FHSZ_Description&f=json`,
-    )
-    const data = await res.json() as { features?: unknown[] }
-    const ok = res.ok && data.features !== undefined
-    return { name: 'CalFire', ok, detail: ok ? `${data.features?.length ?? 0} hazard zones` : 'no response' }
-  } catch (e) {
-    return { name: 'CalFire', ok: false, detail: String(e) }
-  }
+  const r = await fetchJsonSafe<{ features?: unknown[] }>(
+    `https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/FHSZSRA_23_3/FeatureServer/0/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FHSZ,FHSZ_Description&f=json`,
+  )
+  if (!r.ok) return { name: 'CalFire', ok: false, detail: r.detail }
+  if (r.data.features === undefined) return { name: 'CalFire', ok: false, detail: 'malformed response' }
+  return { name: 'CalFire', ok: true, detail: `${r.data.features?.length ?? 0} hazard zones` }
 }
 
 async function checkCensus(): Promise<SourceResult> {
-  try {
-    const geoRes = await fetch(
-      `https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=${TEST_LON}&y=${TEST_LAT}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`,
-    )
-    const geoData = await geoRes.json() as { result?: { geographies?: { 'Census Tracts'?: Array<{ GEOID: string }> } } }
-    const geoid = geoData.result?.geographies?.['Census Tracts']?.[0]?.GEOID
-    if (!geoid) return { name: 'Census', ok: false, detail: 'geocode failed' }
-    const res = await fetch(
-      `https://api.censusreporter.org/1.0/data/show/latest?table_ids=B19013&geo_ids=14000US${geoid}`,
-    )
-    const ok = res.ok
-    return { name: 'Census', ok, detail: ok ? `tract ${geoid}` : `status ${res.status}` }
-  } catch (e) {
-    return { name: 'Census', ok: false, detail: String(e) }
-  }
+  const geo = await fetchJsonSafe<{ result?: { geographies?: { 'Census Tracts'?: Array<{ GEOID: string }> } } }>(
+    `https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=${TEST_LON}&y=${TEST_LAT}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`,
+  )
+  if (!geo.ok) return { name: 'Census', ok: false, detail: `geocode: ${geo.detail}` }
+  const geoid = geo.data.result?.geographies?.['Census Tracts']?.[0]?.GEOID
+  if (!geoid) return { name: 'Census', ok: false, detail: 'geocode returned no tract' }
+  const r = await fetchJsonSafe(
+    `https://api.censusreporter.org/1.0/data/show/latest?table_ids=B19013&geo_ids=14000US${geoid}`,
+  )
+  if (!r.ok) return { name: 'Census', ok: false, detail: r.detail }
+  return { name: 'Census', ok: true, detail: `tract ${geoid}` }
 }
 
 async function checkHUD(): Promise<SourceResult> {
-  try {
-    const geoRes = await fetch(
-      `https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=${TEST_LON}&y=${TEST_LAT}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`,
-    )
-    const geoData = await geoRes.json() as { result?: { geographies?: { 'Census Tracts'?: Array<{ GEOID: string }> } } }
-    const geoid = geoData.result?.geographies?.['Census Tracts']?.[0]?.GEOID
-    if (!geoid) return { name: 'HUD', ok: false, detail: 'geocode failed' }
-    const res = await fetch(
-      `https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/Opportunity_Zones/FeatureServer/13/query?where=GEOID10%3D'${geoid}'&outFields=GEOID10&f=json`,
-    )
-    const data = await res.json() as { features?: unknown[]; error?: unknown }
-    const ok = res.ok && !data.error
-    return { name: 'HUD', ok, detail: ok ? `OZ: ${(data.features?.length ?? 0) > 0}` : `error: ${JSON.stringify(data.error)}` }
-  } catch (e) {
-    return { name: 'HUD', ok: false, detail: String(e) }
-  }
+  const geo = await fetchJsonSafe<{ result?: { geographies?: { 'Census Tracts'?: Array<{ GEOID: string }> } } }>(
+    `https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=${TEST_LON}&y=${TEST_LAT}&benchmark=Public_AR_Current&vintage=Current_Current&format=json`,
+  )
+  if (!geo.ok) return { name: 'HUD', ok: false, detail: `geocode: ${geo.detail}` }
+  const geoid = geo.data.result?.geographies?.['Census Tracts']?.[0]?.GEOID
+  if (!geoid) return { name: 'HUD', ok: false, detail: 'geocode returned no tract' }
+  const r = await fetchJsonSafe<{ features?: unknown[]; error?: unknown }>(
+    `https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/Opportunity_Zones/FeatureServer/13/query?where=GEOID10%3D'${geoid}'&outFields=GEOID10&f=json`,
+  )
+  if (!r.ok) return { name: 'HUD', ok: false, detail: r.detail }
+  if (r.data.error) return { name: 'HUD', ok: false, detail: `arcgis error: ${JSON.stringify(r.data.error).slice(0, 120)}` }
+  return { name: 'HUD', ok: true, detail: `OZ: ${(r.data.features?.length ?? 0) > 0}` }
 }
 
+// Renamed from prior misnomer. Hits the real ZIMAS MapServer layer 8 that the
+// feasibility engine depends on — replacing the dead navigate.lacity.org endpoint.
 async function checkZIMAS(): Promise<SourceResult> {
-  try {
-    const q = encodeURIComponent(TEST_STREET + ', ' + TEST_CITY + ', ' + TEST_STATE + ' ' + TEST_ZIP)
-    const res = await fetch(
-      `https://navigate.lacity.org/api/1/Addresses/Geocode?text=${q}&f=json`,
-    )
-    const ok = res.ok
-    return { name: 'ZIMAS', ok, detail: ok ? 'geocode ok' : `status ${res.status}` }
-  } catch (e) {
-    return { name: 'ZIMAS', ok: false, detail: String(e) }
-  }
+  const r = await fetchJsonSafe<{ features?: Array<{ attributes?: { ZONE_CMPLT?: string } }> }>(
+    `https://maps.lacity.org/lahub/rest/services/City_Planning_Department/MapServer/8/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=75&units=esriSRUnit_Foot&outFields=ZONE_CMPLT&returnGeometry=false&f=json`,
+  )
+  if (!r.ok) return { name: 'ZIMAS', ok: false, detail: r.detail }
+  const zone = r.data.features?.[0]?.attributes?.ZONE_CMPLT
+  if (!zone) return { name: 'ZIMAS', ok: false, detail: 'no zone returned for test point' }
+  return { name: 'ZIMAS', ok: true, detail: `zone: ${zone}` }
 }
 
 export async function runHealthCheck(env: Env): Promise<void> {
