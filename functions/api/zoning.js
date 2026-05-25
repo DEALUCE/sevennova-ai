@@ -259,40 +259,77 @@ async function assessorSearch(address, geoLat, geoLng) {
   } catch { return ''; }
 }
 
-function bestParcelMatch(input, parcels) {
+export function bestParcelMatch(input, parcels) {
   const norm = s => s.toUpperCase()
     .replace(/\b(AVENUE|AVE|STREET|STR|BLVD|BOULEVARD|ROAD|RD|DRIVE|DR|LANE|LN|WAY|COURT|CT|PLACE|PL|TERRACE|TER|HWY|FWY)\b/g, '')
     .replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g,' ').trim();
   const numOf = s => s.match(/^\d+/)?.[0] || '';
+
+  // Direction letters / cardinal words MUST NOT score as street-name matches.
+  // "904 S Ardmore" should not be confused with "904 S San Fernando" just
+  // because both have "S" as a direction prefix.
+  const DIRECTION_TOKENS = new Set(['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW',
+                                     'NORTH', 'SOUTH', 'EAST', 'WEST'])
+  const filterScoringWords = (words, num) => words.filter(w =>
+    w && w !== num && !DIRECTION_TOKENS.has(w) && w.length > 1
+  )
 
   // Use only the street part (before comma) for word matching — prevents
   // city name words like "LOS", "ANGELES" from matching "LOS ANGELES ST"
   const streetPart = input.replace(/,.*$/, '').trim();
   const inNorm   = norm(streetPart);
   const inNum    = numOf(inNorm);
-  const inWords  = inNorm.split(/\s+/).filter(w => w && w !== inNum);
+  const inWordsAll = inNorm.split(/\s+/);
+  const inWords  = filterScoringWords(inWordsAll, inNum);   // street-name words only
   const zipMatch = (input.match(/\b(\d{5})\b/) || [])[1] || '';
   // Detect if input has explicit unit — "Apt", "#", "Unit", "Suite"
   const hasUnit  = /\b(apt|unit|#|ste|suite|no)\b/i.test(input);
+  // Detect city in input (e.g. "Los Angeles" in "904 S Ardmore Ave, Los Angeles, CA")
+  const inCity   = (input.match(/,\s*([A-Za-z][A-Za-z\s]+?)(?:\s*,|\s+CA\b)/i) || [])[1]?.trim().toUpperCase() || '';
 
+  // First pass: hard requirement — at least one non-direction street-name word
+  // must match. This prevents "904 S Anything" winning over "906 S Ardmore"
+  // when the input is "904 S Ardmore".
   let best = null, bestScore = -1;
   for (const p of parcels) {
     const raw   = (p.SitusStreet || '').toUpperCase();
     const situs = norm(raw);
     const situsNum = numOf(situs);
-    const situsWords = situs.split(/\s+/).filter(w => w && w !== situsNum);
+    const situsWords = filterScoringWords(situs.split(/\s+/), situsNum);
+    const situsCity = String(p.SitusCity || '').toUpperCase();
 
-    // Skip unit-number parcels (e.g. "746 S LOS ANGELES ST, NO 904")
-    // unless the input itself includes a unit indicator
+    // Skip unit-number parcels (e.g. "746 S LOS ANGELES ST, NO 904",
+    // "727 S ARDMORE AVE, NO 904") unless the input itself includes a unit.
     if (!hasUnit && /\bNO\s+\d+|\bAPT\s+\d+|\bUNIT\s+\d+/.test(raw)) continue;
 
+    // Hard filter: when input has a street name (non-direction word), the parcel
+    // MUST share at least one of those words. Otherwise it is a different street
+    // entirely and cannot be the right parcel regardless of its house number.
+    const nameMatches = inWords.filter(w => situsWords.includes(w)).length
+    if (inWords.length > 0 && nameMatches === 0) continue;
+
     let score = 0;
-    if (situsNum && situsNum === inNum) score += 25;
-    for (const w of inWords) {
-      if (situsWords.includes(w)) score += 20;   // word match weighted higher than number match
+    // Street-name match dominates — unique identifier.
+    score += nameMatches * 30;
+    if (inWords.length > 0 && nameMatches === inWords.length) score += 20;   // full street-name match bonus
+    // Number match — secondary, since adjacent house numbers often share a parcel.
+    if (situsNum && situsNum === inNum) score += 15;
+    else if (situsNum && inNum) {
+      const dn = Math.abs(parseInt(situsNum, 10) - parseInt(inNum, 10))
+      if (dn <= 4) score += 10            // immediate neighbors (e.g. 904 → 906)
+      else if (dn <= 10) score += 4
     }
-    // Bonus: zip code match
-    if (zipMatch && (p.SitusZipCode || '').startsWith(zipMatch)) score += 15;
+    // ZIP match — full 5-digit or 3-digit (90005 vs 90006 share LA area).
+    const situsZip = String(p.SitusZipCode || '')
+    if (zipMatch) {
+      if (situsZip.startsWith(zipMatch)) score += 12
+      else if (situsZip.slice(0, 3) === zipMatch.slice(0, 3)) score += 6
+    }
+    // City sanity penalty: if input said "Los Angeles" but Assessor city is
+    // "Burbank" / "Palmdale" / etc., that's a wrong-parcel signal.
+    if (inCity && situsCity && !situsCity.includes(inCity) && !inCity.includes(situsCity.split(' ')[0])) {
+      score -= 30
+    }
     if (score > bestScore) { bestScore = score; best = p; }
   }
   return best;
