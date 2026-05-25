@@ -27,16 +27,27 @@ export async function onRequestPost(context) {
     // 3. TOC tier
     const toc = calcTOC(lat, lng);
 
-    // 4. Zoning
-    const zoneStr  = parcel.zoning_pdb || '';
+    // 4. Zoning — LA City ZIMAS is authoritative; County Assessor `zoning_pdb` is only a sanity-check
+    //    against parcel-identity drift (Assessor search returning the wrong APN).
+    const zimas = await fetchZimas(lat, lng);   // null if outside LA City or service fails
+
+    // Parcel identity reconciliation. If Assessor's zoning code is empty OR clearly
+    // inconsistent with the LA City ZIMAS zone at the geocoded point, treat the
+    // Assessor parcel as a possible mismatch and gate downstream finance/units.
+    const parcelIdentity = reconcileParcelIdentity(parcel, zimas);
+
+    // ZIMAS is primary source. Fall back to Assessor `zoning_pdb` ONLY when ZIMAS is
+    // unavailable. If neither resolves to an LA City pattern, downstream functions
+    // produce NEEDS_INPUT (no silent default to 1 unit).
+    const zoneStr  = (zimas && zimas.zone_code) || parcel.zoning_pdb || '';
     const zoneInfo = parseZone(zoneStr);
 
     // 5. Opportunity zone
     const zip     = parcel.zip || geo.zip || '';
     const oppZone = LA_OZ_ZIPS.has(zip.split('-')[0]);
 
-    // 6. Development potential
-    const dev = calcDevelopment(parcel, toc, zoneInfo);
+    // 6. Development potential — uses ZIMAS-derived zone for correct LAMC density
+    const dev = calcDevelopment(parcel, toc, zoneInfo, zimas);
 
     // 7. SB9 + ADU
     const sb9 = calcSB9(parcel, zoneInfo, lat, lng);
@@ -95,11 +106,17 @@ export async function onRequestPost(context) {
         note: 'LA County Assessor assessed values (Prop 13 base; may be below market)',
       },
       zoning: {
-        code:               zoneStr || 'N/A',
-        description:        zoneInfo.description || '',
+        code:                 zoneStr || 'N/A',
+        description:          zoneInfo.description || '',
         multifamily_eligible: zoneInfo.multifamily || false,
-        source:             'LA County Assessor (ZoningPDB)',
+        source:               zimas && zimas.zone_code ? 'LA City ZIMAS (live)' : 'LA County Assessor (ZoningPDB)',
+        zimas_zone_complete:  zimas ? zimas.zone_complete : null,
+        zimas_zone_class:     zimas ? zimas.zone_class : null,
+        zimas_height_district: zimas ? zimas.height_district : null,
+        max_far:              zimas ? zimas.max_far : null,
+        height_limit_ft:      zimas ? zimas.height_limit_ft : null,
       },
+      parcel_identity: parcelIdentity,
       overlays: {
         toc_tier:            toc.tier,
         toc_eligible:        toc.eligible,
@@ -491,39 +508,209 @@ function calcTOC(lat, lng) {
 
 // ── Zone parser ───────────────────────────────────────────────────────────────
 
-const ZONE_PATTERNS = [
-  [/R5/,    'High-Density Multifamily (R5)',      true,  0.125],
-  [/R4/,    'High-Density Multifamily (R4)',      true,  0.200],
-  [/R3/,    'Medium-Density Multifamily (R3)',    true,  0.333],
-  [/R2/,    'Two-Family Residential (R2)',        true,  0.500],
-  [/RD/,    'Restricted Density Residential',    true,  0.333],
-  [/RAS/,   'Residential Accessory Services',    true,  0.333],
-  [/RAP/,   'Restricted Apt Parking',            true,  0.333],
-  [/RA-?1/, 'Suburban (RA-1)',                   false, 2.000],
-  [/RE/,    'Residential Estate',                false, 1.000],
-  [/RS/,    'Suburban Residential',              false, 1.000],
-  [/R1/,    'Single Family Residential (R1)',    false, 1.000],
-  [/A1|A2/, 'Agricultural / Rural',             false, 2.000],
-  [/C[12]/, 'Neighborhood Commercial',          false, 0.500],
-  [/C[24]/, 'Commercial/Mixed-Use',             false, 0.333],
-  [/C5/,    'Commercial (C5)',                  false, 0.333],
-  [/CM/,    'Commercial Manufacturing',         false, 0.333],
-  [/CR/,    'Commercial Recreation',            false, 0.333],
-  [/MR1/,   'Light Industrial (MR1)',           false, 0.500],
-  [/M1/,    'Limited Manufacturing (M1)',       false, 0.500],
-  [/M2/,    'Light Industrial (M2)',            false, 0.500],
-  [/M3/,    'Heavy Industrial (M3)',            false, 0.500],
-  [/P/,     'Parking',                          false, 1.000],
-  [/OS/,    'Open Space',                       false, 1.000],
-  [/PF/,    'Public Facilities',                false, 1.000],
-];
+// ── LAMC density table — sf_per_unit per LAMC §12.07–12.13 ─────────────────
+// Sources: LAMC §12.07.01 (R1), 12.08 (RS/RE/RA), 12.09.5 (R2), 12.10 (RD/R3),
+//          12.11 (R4/R5), 12.13.5 (commercial zones permit R4 residential).
+// Value semantics: minimum lot square footage required per dwelling unit.
+// `null` = single-family or undefined density (special handling).
+const ZONE_DENSITY_SF_PER_UNIT = {
+  // Multi-family residential (per-unit-sf basis)
+  R5:    200,
+  R4:    400,
+  RAS4:  400,
+  R3:    800,
+  RAS3:  800,
+  RD1:   1500,   // "RD1.5" → matched as RD1
+  RD2:   2000,
+  RD3:   3000,
+  RD4:   4000,
+  RD5:   5000,
+  RD6:   6000,
+  // Commercial zones permit R4 residential density per LAMC 12.13.5
+  C1:    400,  C2: 400,  C4: 400,  C5: 400,
+  CM:    400,  CR: 400,  CW: 400,  CCS: 400,
+  M1:    400,  M2: 400,  M3: 400,  MR1: 400,  MR2: 400,
+}
 
-function parseZone(zone) {
-  const z = zone.toUpperCase();
-  for (const [re, desc, mf, df] of ZONE_PATTERNS) {
-    if (re.test(z)) return { description:desc, multifamily:mf, density_factor:df };
+// Single-family and special: max units is structural, not density-driven.
+const ZONE_SINGLE_UNIT  = new Set(['R1', 'RS', 'RE', 'RA', 'RU', 'RZ', 'RW1'])
+const ZONE_DUPLEX       = new Set(['R2'])   // LAMC §12.09.5 → 2 units max by-right
+const ZONE_NONRESID     = new Set(['OS', 'PF', 'P', 'A1', 'A2'])  // no residential density
+
+const ZONE_PATTERNS = [
+  // Order matters — most specific first to avoid R5/R4/R3 catching RD/RAS/etc.
+  [/^R5\b|^R5-/,            'High-Density Multifamily (R5)',           true,  'R5'],
+  [/^RAS4\b|^RAS4-/,        'Residential Accessory Services (RAS4)',   true,  'RAS4'],
+  [/^R4\b|^R4-/,            'High-Density Multifamily (R4)',           true,  'R4'],
+  [/^RAS3\b|^RAS3-/,        'Residential Accessory Services (RAS3)',   true,  'RAS3'],
+  [/^R3\b|^R3-/,            'Medium-Density Multifamily (R3)',         true,  'R3'],
+  [/^R2\b|^R2-/,            'Two-Family Residential (R2)',             true,  'R2'],
+  [/^RD1\.5|^RD1\b|^RD1-/,  'Restricted Density (RD1.5)',              true,  'RD1'],
+  [/^RD2\b|^RD2-/,          'Restricted Density (RD2)',                true,  'RD2'],
+  [/^RD3\b|^RD3-/,          'Restricted Density (RD3)',                true,  'RD3'],
+  [/^RD4\b|^RD4-/,          'Restricted Density (RD4)',                true,  'RD4'],
+  [/^RD5\b|^RD5-/,          'Restricted Density (RD5)',                true,  'RD5'],
+  [/^RD6\b|^RD6-/,          'Restricted Density (RD6)',                true,  'RD6'],
+  [/^RD/,                   'Restricted Density Residential',          true,  'RD1'],     // RD fallback
+  [/^RA-?1|^RA\b|^RA-/,     'Suburban (RA-1)',                         false, 'RA'],
+  [/^RE/,                   'Residential Estate',                      false, 'RE'],
+  [/^RS/,                   'Suburban Residential (RS)',               false, 'RS'],
+  [/^R1/,                   'Single Family Residential (R1)',          false, 'R1'],
+  [/^C1\b|^C1-|^C1\.5/,     'Neighborhood Commercial (C1)',            true,  'C1'],
+  [/^C2\b|^C2-/,            'Commercial/Mixed-Use (C2)',               true,  'C2'],
+  [/^C4\b|^C4-/,            'Commercial/Mixed-Use (C4)',               true,  'C4'],
+  [/^C5\b|^C5-/,            'Commercial (C5)',                         true,  'C5'],
+  [/^CM\b|^CM-/,            'Commercial Manufacturing',                true,  'CM'],
+  [/^CR\b|^CR-/,            'Commercial Recreation',                   true,  'CR'],
+  [/^CW\b|^CW-/,            'Central City West',                       true,  'CW'],
+  [/^M1\b|^M1-/,            'Limited Manufacturing (M1)',              true,  'M1'],
+  [/^M2\b|^M2-/,            'Light Industrial (M2)',                   true,  'M2'],
+  [/^M3\b|^M3-/,            'Heavy Industrial (M3)',                   true,  'M3'],
+  [/^MR1|^MR2/,             'Restricted Industrial',                   true,  'MR1'],
+  [/^P\b|^P-|^P\./,         'Parking',                                 false, 'P'],
+  [/^OS\b|^OS-/,            'Open Space',                              false, 'OS'],
+  [/^PF\b|^PF-/,            'Public Facilities',                       false, 'PF'],
+  [/^A1\b|^A2\b/,           'Agricultural / Rural',                    false, 'A1'],
+]
+
+export function parseZone(zone) {
+  // Strip leading overlay markers like "[Q]" or "[T]" or "(T)" so the base zone is matched.
+  const z = (zone || '').toUpperCase().replace(/^\[(Q|T|D)\]/g, '').replace(/^\((Q|T|D)\)/g, '').trim()
+  for (const [re, desc, mf, classKey] of ZONE_PATTERNS) {
+    if (re.test(z)) {
+      return {
+        description: desc,
+        multifamily: mf,
+        zone_class: classKey,
+        sf_per_unit: ZONE_DENSITY_SF_PER_UNIT[classKey] ?? null,
+        single_unit: ZONE_SINGLE_UNIT.has(classKey),
+        duplex:      ZONE_DUPLEX.has(classKey),
+        nonresid:    ZONE_NONRESID.has(classKey),
+      }
+    }
   }
-  return { description:'Unknown / Verify at ZIMAS', multifamily:false, density_factor:1.0 };
+  // Unknown / non-LA-City code — NO silent default to 1 unit. Surface as NEEDS_INPUT.
+  return {
+    description: 'Unknown — verify at LA City ZIMAS',
+    multifamily: null,
+    zone_class:  null,
+    sf_per_unit: null,
+    single_unit: false,
+    duplex:      false,
+    nonresid:    false,
+    needs_input: true,
+  }
+}
+
+// ── ZIMAS fetcher — LA City zoning + FAR/height (port from worker/src/zimas.ts) ──
+const ZIMAS_BASE = 'https://maps.lacity.org/lahub/rest/services/City_Planning_Department/MapServer'
+const HEIGHT_DISTRICT_FT = { '1VL': 25, '1XL': 25, '1L': 33, '1': 45, '2': 45, '3': 75, '4': null }
+const HEIGHT_DISTRICT_STORIES = { '1VL': 2, '1XL': 2, '1L': 3, '1': 3, '2': 4, '3': 6, '4': null }
+const FAR_TABLE = {
+  R1: { '1VL':0.5,'1XL':0.5,'1L':0.5,'1':0.5,'2':0.6,'3':0.75,'4':1.0 },
+  R2: { '1VL':0.55,'1XL':0.55,'1L':0.6,'1':0.65,'2':0.85,'3':1.5,'4':2.0 },
+  RD: { '1VL':0.55,'1XL':0.55,'1L':0.6,'1':0.65,'2':0.85,'3':1.5,'4':2.0 },
+  R3: { '1VL':0.75,'1XL':0.75,'1L':0.85,'1':1.0,'2':1.5,'3':3.0,'4':4.5 },
+  R4: { '1VL':1.0, '1XL':1.0, '1L':1.25,'1':1.5,'2':2.25,'3':4.5,'4':6.0 },
+  R5: { '1VL':1.5, '1XL':1.5, '1L':2.0, '1':3.0,'2':4.5,'3':6.0,'4':6.0 },
+  C1: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 }, C2: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 },
+  C4: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 }, C5: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 },
+  CM: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 }, CR: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 },
+  M1: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 }, M2: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 }, M3: { '1':1.5,'2':1.5,'3':3.0,'4':6.0 },
+}
+function parseHeightDistrict(zoneCode) {
+  const m = (zoneCode || '').match(/-(\d+[A-Z]*)/)
+  return m ? m[1] : '1'
+}
+function parseZoneClassFromCode(zoneCode) {
+  return (zoneCode || '').split('-')[0].replace(/\[.*?\]|\(.*?\)/g, '').trim().toUpperCase()
+}
+async function fetchZimas(lat, lng) {
+  try {
+    const params = new URLSearchParams({
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      distance: '75',
+      units: 'esriSRUnit_Foot',
+      outFields: 'ZONE_CMPLT,ZONE_CLASS,ZONE_CODE,ZONING_DESCRIPTION',
+      returnGeometry: 'false',
+      f: 'json',
+    })
+    const res = await fetch(`${ZIMAS_BASE}/8/query?${params}`, { signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    const data = await res.json()
+    const a = data?.features?.[0]?.attributes
+    if (!a) return null
+    const zoneComplete = String(a.ZONE_CMPLT || '').trim()
+    if (!zoneComplete) return null
+    const zoneClass = parseZoneClassFromCode(zoneComplete)
+    const heightDistrict = parseHeightDistrict(zoneComplete)
+    const farClassKey = zoneClass.startsWith('RD') ? 'RD' : zoneClass   // RD shares one row
+    const maxFar = (FAR_TABLE[farClassKey] && FAR_TABLE[farClassKey][heightDistrict]) ?? null
+    const heightFt = HEIGHT_DISTRICT_FT[heightDistrict] ?? null
+    return {
+      zone_code:        zoneComplete,
+      zone_complete:    zoneComplete,
+      zone_class:       zoneClass,
+      height_district:  heightDistrict,
+      zone_description: String(a.ZONING_DESCRIPTION || ''),
+      max_far:          maxFar,
+      height_limit_ft:  heightFt,
+      height_limit_stories: HEIGHT_DISTRICT_STORIES[heightDistrict] ?? null,
+      source: 'LA_CITY_ZIMAS_LIVE',
+    }
+  } catch { return null }
+}
+
+// ── Parcel identity reconciliation ───────────────────────────────────────────
+// Compare LA County Assessor parcel record against LA City ZIMAS zone at the
+// geocoded point. If the Assessor's `zoning_pdb` doesn't broadly correspond to
+// the LA City zone class — or is absent — flag the parcel record as a probable
+// identity mismatch (Assessor lookup likely returned the wrong APN).
+export function reconcileParcelIdentity(parcel, zimas) {
+  if (!zimas || !zimas.zone_class) {
+    return {
+      status: 'NEEDS_INPUT',
+      apn: parcel.apn || null,
+      reason: 'LA City ZIMAS zoning unavailable — cannot verify parcel identity.',
+    }
+  }
+  const assessorZone = String(parcel.zoning_pdb || '').toUpperCase().trim()
+  const zimasClass = zimas.zone_class
+  // Heuristic: County Assessor `zoning_pdb` for LA City parcels usually contains
+  // the LA City zone class as a substring (e.g. "R4-2", "R4*", "[Q]R4-1"). When
+  // the Assessor returns a non-LA-City code like "BUC3*" or an empty string, the
+  // parcel lookup is likely wrong.
+  const looksLikeLAcityCode = !!assessorZone && (
+    assessorZone.includes(zimasClass) ||
+    /^\[?[QTD]?\]?(R[1-5]|RA|RE|RS|RD|RAS|C[1-5]|CM|CR|CW|M[1-3]|MR|OS|PF|P)/.test(assessorZone)
+  )
+  if (!assessorZone) {
+    return {
+      status: 'NEEDS_REVIEW',
+      apn: parcel.apn || null,
+      reason: 'Parcel identity requires review — LA County Assessor returned no zoning code; cannot verify the AIN matches the geocoded address.',
+      assessor_zone: null,
+      zimas_zone: zimas.zone_code,
+    }
+  }
+  if (!looksLikeLAcityCode) {
+    return {
+      status: 'NEEDS_REVIEW',
+      apn: parcel.apn || null,
+      reason: `Parcel identity requires review — LA County Assessor returned "${assessorZone}" which is not an LA City zoning code; the AIN may belong to a different parcel.`,
+      assessor_zone: assessorZone,
+      zimas_zone: zimas.zone_code,
+    }
+  }
+  return {
+    status: 'VERIFIED',
+    apn: parcel.apn || null,
+    assessor_zone: assessorZone,
+    zimas_zone: zimas.zone_code,
+  }
 }
 
 // ── Opportunity Zone (zip screen) ─────────────────────────────────────────────
@@ -541,30 +728,79 @@ const LA_OZ_ZIPS = new Set([
 
 // ── Development potential ─────────────────────────────────────────────────────
 
-function calcDevelopment(parcel, toc, zoneInfo) {
-  const lot  = parcel.sqft_lot || 0;
-  const isMF = zoneInfo.multifamily || false;
-  const df   = zoneInfo.density_factor || 1.0;
+export function calcDevelopment(parcel, toc, zoneInfo, zimas) {
+  const lot = parcel.sqft_lot || 0;
 
-  if (!lot) return { note:'Lot size unavailable' };
+  if (!lot) {
+    return {
+      note: 'Lot size unavailable',
+      needs_input: true,
+      base_units_by_right: null,
+      toc_units: null,
+      max_potential_units: null,
+    };
+  }
+  if (zoneInfo.needs_input) {
+    return {
+      note: 'Zoning could not be resolved from LA City ZIMAS — cannot compute by-right units.',
+      needs_input: true,
+      base_units_by_right: null,
+      toc_units: null,
+      max_potential_units: null,
+    };
+  }
 
-  const base     = isMF ? Math.max(1, Math.floor(lot / 1000 * df)) : 1;
-  const tocMults = {0:1.0,1:1.22,2:1.33,3:1.50,4:1.70};
-  const tocMult  = tocMults[toc.tier] || 1.0;
-  const tocUnits = toc.eligible ? Math.floor(base * tocMult) : 0;
-  const miipUnits= isMF ? Math.floor(base * 2.2) : 0;
-  const maxUnits = Math.max(base, tocUnits, miipUnits);
+  // ── Base by-right density per LAMC Title 12 ──────────────────────────────
+  let base;
+  if (zoneInfo.nonresid) {
+    base = 0;                                              // OS / PF / P / A — no by-right residential
+  } else if (zoneInfo.single_unit) {
+    base = 1;                                              // R1/RS/RE/RA — single dwelling
+  } else if (zoneInfo.duplex) {
+    base = 2;                                              // R2 — duplex (LAMC 12.09.5)
+  } else if (zoneInfo.sf_per_unit && zoneInfo.sf_per_unit > 0) {
+    base = Math.floor(lot / zoneInfo.sf_per_unit);         // multifamily / commercial-residential
+  } else {
+    base = null;                                           // unknown / NEEDS_INPUT
+  }
+
+  if (base === null) {
+    return {
+      note: 'Density formula unavailable for resolved zone — verify at ZIMAS.',
+      needs_input: true,
+      base_units_by_right: null,
+      toc_units: null,
+      max_potential_units: null,
+    };
+  }
+
+  // ── TOC density bonus per LAMC § 12.22 A.31 (Measure JJJ tier table) ─────
+  const TOC_BONUS_PCT = { 1: 0.225, 2: 0.325, 3: 0.50, 4: 0.80 };   // unit bonus over base by tier
+  const tocBonusPct = (toc && toc.eligible && TOC_BONUS_PCT[toc.tier]) ? TOC_BONUS_PCT[toc.tier] : 0;
+  const tocUnits = (base > 0 && tocBonusPct > 0) ? Math.floor(base * (1 + tocBonusPct)) : 0;
+
+  // ── State Density Bonus per Cal. Gov. Code § 65915 ───────────────────────
+  // Conservative ceiling for typical mixed-income deals (20% very-low-income or
+  // equivalent) is +35%; 100%-affordable projects unlock the +80% maximum
+  // (handled separately in ED1 pathway). Use +35% here as the by-right bonus.
+  const stateBonusUnits = base > 0 ? Math.floor(base * 1.35) : 0;
+
+  const maxUnits = Math.max(base, tocUnits, stateBonusUnits);
 
   return {
     base_units_by_right:  base,
     toc_units:            tocUnits,
-    miip_units:           miipUnits,
+    state_bonus_units:    stateBonusUnits,
     max_potential_units:  maxUnits,
-    toc_density_bonus:    toc.eligible ? `${Math.round((tocMult-1)*100)}%` : 'N/A',
-    miip_available:       isMF,
-    ab2097_zero_parking:  toc.eligible,
-    far_boost_available:  toc.eligible || isMF ? '55%' : '0%',
-    approval_path:        toc.eligible || isMF ? 'Ministerial (by-right)' : 'Discretionary',
+    toc_density_bonus:    toc && toc.eligible ? `${Math.round(tocBonusPct * 100)}%` : 'N/A',
+    miip_available:       !!zoneInfo.multifamily,
+    ab2097_zero_parking:  !!(toc && toc.eligible),
+    far_boost_available:  toc && toc.eligible ? '55%' : '0%',
+    approval_path:        (toc && toc.eligible) || zoneInfo.multifamily ? 'Ministerial (by-right)' : 'Discretionary',
+    max_far:              zimas ? zimas.max_far : null,
+    height_limit_ft:      zimas ? zimas.height_limit_ft : null,
+    zone_class:           zoneInfo.zone_class,
+    sf_per_unit:          zoneInfo.sf_per_unit,
   };
 }
 
@@ -999,7 +1235,7 @@ function grantToObj(g) {
 // ── Entitlement Analysis ──────────────────────────────────────────────────────
 // Produces ranked development pathways with LAMC / state statute citations.
 
-function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
+export function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
   const z = (parcel.zoning_pdb || '').toUpperCase().trim();
   const lotSf = parcel.sqft_lot || 0;
   const baseUnits = dev.base_units_by_right || 0;
@@ -1049,27 +1285,65 @@ function calcEntitlementAnalysis(parcel, toc, zoneInfo, dev) {
     });
   }
 
-  // 3. ED1 (100% affordable — citywide)
+  // 3. ED1 (100% affordable — citywide ministerial)
+  //    Unit math: state density bonus law (Gov. Code § 65915) grants up to +80%
+  //    density above base zoning for 100%-affordable projects, plus waivers /
+  //    concessions of base development standards. We use the +80% statutory
+  //    ceiling as the preliminary cap; site-specific concessions handled
+  //    downstream by a licensed land use attorney.
+  //
+  //    The "5 units" figure is the ED1 ELIGIBILITY MINIMUM (per LAHD ED1
+  //    Implementation Guidelines), NOT a maximum or floor on output units.
   {
-    const ed1Units = Math.max(tocUnits, baseUnits * 2, 5);
-    pathways.push({
-      id: 'ed1',
-      name: 'ED1 Streamlined (100% Affordable)',
-      category: 'ministerial',
-      timeline: '2–6 months',
-      max_units: ed1Units,
-      affordable_required_pct: 100,
-      key_requirements: [
-        '100% of units affordable at ≤80% AMI (mix allowed)',
-        'Minimum 5 units',
-        'Ministerial review only — no Planning Commission hearing',
-        'Prevailing wage if using public financing',
-      ],
-      risks: ['No market-rate revenue — must stack with LIHTC/HOME/AHSC to pencil', 'Best for affordable housing developers / non-profits'],
-      citation: "Mayor's Executive Directive 1 (2022) — 100% Affordable Housing Streamlined Approval",
-      citation_url: 'https://clkrep.lacity.org/onlinedocs/2022/22-0905_misc_09-07-22.pdf',
-      speed_rank: 1, units_rank: 1, risk_rank: 1,
-    });
+    const ED1_MIN_UNITS_ELIGIBILITY = 5;
+    const STATE_DENSITY_BONUS_100PCT_AFFORDABLE = 0.80;     // Gov. Code § 65915(f)(2)
+    const ed1Units = (baseUnits != null && baseUnits > 0)
+      ? Math.floor(baseUnits * (1 + STATE_DENSITY_BONUS_100PCT_AFFORDABLE))
+      : null;
+    const ed1Eligible = ed1Units !== null && ed1Units >= ED1_MIN_UNITS_ELIGIBILITY;
+    if (ed1Eligible) {
+      pathways.push({
+        id: 'ed1',
+        name: 'ED1 Streamlined (100% Affordable)',
+        category: 'ministerial',
+        timeline: '2–6 months',
+        max_units: ed1Units,
+        affordable_required_pct: 100,
+        key_requirements: [
+          '100% of units affordable at ≤80% AMI (mix allowed)',
+          `Minimum ${ED1_MIN_UNITS_ELIGIBILITY} units required to qualify for ED1`,
+          'Ministerial review only — no Planning Commission hearing',
+          'Prevailing wage if using public financing',
+        ],
+        risks: [
+          'No market-rate revenue — must stack with LIHTC/HOME/AHSC to pencil',
+          'Best for affordable housing developers / non-profits',
+          'State density bonus +80% is statutory ceiling; site-specific waivers/concessions require land-use counsel review',
+        ],
+        citation: "Cal. Gov. Code § 65915(f)(2) state density bonus + Mayor's Executive Directive 1 (2022) — 100% Affordable Housing Streamlined Approval",
+        citation_url: 'https://clkrep.lacity.org/onlinedocs/2022/22-0905_misc_09-07-22.pdf',
+        speed_rank: 1, units_rank: 1, risk_rank: 1,
+      });
+    } else if (baseUnits != null && baseUnits > 0) {
+      // Eligibility minimum not met — record as NEEDS_REVIEW pathway so the UI
+      // doesn't silently drop ED1 from the analysis.
+      pathways.push({
+        id: 'ed1',
+        name: 'ED1 Streamlined (100% Affordable) — NEEDS_REVIEW',
+        category: 'ministerial',
+        timeline: '2–6 months',
+        max_units: null,
+        affordable_required_pct: 100,
+        key_requirements: [
+          `Base zoning yields ${baseUnits} by-right units; ED1 requires ≥${ED1_MIN_UNITS_ELIGIBILITY} unit project after density bonus to qualify`,
+          'Verify lot consolidation, density-bonus waivers, or alternative pathway with land-use counsel',
+        ],
+        risks: ['Project may not meet ED1 minimum unit threshold without lot consolidation or waivers'],
+        citation: "Cal. Gov. Code § 65915 + LAHD ED1 Implementation Guidelines",
+        citation_url: 'https://planning.lacity.gov/odocument/d595b164-5df4-4d37-8b88-1f74d5b88766/ED_1_Implementation_Guidelines.pdf',
+        speed_rank: 1, units_rank: 4, risk_rank: 3,
+      });
+    }
   }
 
   // 4. SB 35 (streamlined ministerial — LA behind RHNA)

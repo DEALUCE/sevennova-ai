@@ -273,9 +273,14 @@ export function analyzeEntitlement(input: EntitlementInput): EntitlementAnalysis
   }
 
   // ── Pathway 3: ED1 Streamlined (100% affordable) ──────────────────────────
+  // ED1 unit math derives from Cal. Gov. Code § 65915(f)(2) — 100%-affordable
+  // projects unlock the +80% state density bonus ceiling. The "minimum 5 units"
+  // is the LAHD eligibility threshold, NOT a cap. We take the greater of
+  // (TOC max) and (base × 1.80) to reflect typical state-density-bonus stacking.
   if (ed1_eligible) {
-    // ED1 allows up to the TOC max or base zoning × 2, whichever is greater
-    const ed1Units = Math.max(totalTocUnits, units_by_right * 2)
+    const STATE_DENSITY_BONUS_100PCT_AFFORDABLE = 0.80
+    const ed1FromBase = Math.floor(units_by_right * (1 + STATE_DENSITY_BONUS_100PCT_AFFORDABLE))
+    const ed1Units = Math.max(totalTocUnits, ed1FromBase)
     citations.push(ED1_CITATION)
 
     pathways.push({
