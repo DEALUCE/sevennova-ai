@@ -81,8 +81,13 @@ async function checkLADBS(): Promise<SourceResult> {
 }
 
 async function checkFEMA(): Promise<SourceResult> {
+  // FEMA ArcGIS drops ~2/3 of connections (verified 2026-06-10: resets + CF 525).
+  // 4 attempts with 1.5s backoff rides out their load-shedding.
   const r = await fetchJsonSafe<{ features?: Array<{ attributes?: { FLD_ZONE?: string } }> }>(
     `https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?geometry=${TEST_LON},${TEST_LAT}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=FLD_ZONE&f=json`,
+    {},
+    3,
+    1_500,
   )
   if (!r.ok) return { name: 'FEMA', ok: false, detail: r.detail }
   if (r.data.features === undefined) return { name: 'FEMA', ok: false, detail: 'malformed response (no features field)' }
