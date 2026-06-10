@@ -16,6 +16,8 @@ const RENTLAELITE_ROUTES = new Set([
   '/furnished-rental-los-angeles-90035',
   '/gallery',
   '/gated-compound-rental-los-angeles',
+  '/insurance-housing-los-angeles',
+  '/super-bowl-2027-housing-los-angeles',
   '/kosher-kitchen-luxury-rental-los-angeles',
   '/luxury-rental-beverlywood',
   '/property',
