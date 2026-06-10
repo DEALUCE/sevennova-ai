@@ -22,6 +22,7 @@ const RENTLAELITE_ROUTES = new Set([
   '/results',
   '/services',
   '/short-term-luxury-rental-west-los-angeles',
+  '/zoning',
   '/corporate-housing-los-angeles',
   '/executive-rental-beverly-hills',
   '/luxury-rental-near-sofi-stadium',
