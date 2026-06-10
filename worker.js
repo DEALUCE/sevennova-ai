@@ -2,8 +2,10 @@
 
 const RENTLAELITE_ROUTES = new Set([
   '/_astro',
+  '/5-bedroom-luxury-rental-los-angeles',
   '/about',
   '/apply',
+  '/beverlywood-neighborhood-guide',
   '/beverly-hills-luxury-rentals',
   '/beverly-hills-market-report',
   '/brief',
